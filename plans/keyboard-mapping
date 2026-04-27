@@ -1,0 +1,108 @@
+ okay.. i think in ./controller we implement hte midi mapper. 
+It uses av-controls from ./protocol
+- Additionally to the midi mapper, we want to allow mapping keyboard keys to pads and switches. 
+- also we want the current mapping to be saved to indexdb (per artwork) and restored on page load. 
+- keyboard key presses should show along the midi signals in the mapper signal selector
+- frontend is using controller via npm link - so we should make vite aware about it so that it updates
+ on code changes and no cache.
+
+make yourself familiar with the code. 
+let me know if you have open questions 
+
+● I'll explore the codebase to understand the current implementation, particularly focusing on the
+  controller, MIDI mapper, and av-controls integration.
+
+● Explore(Explore controller and protocol structure)
+  ⎿  Done (35 tool uses · 57.9k tokens · 5m 51s)                                                     
+
+● Perfect! Now I have a comprehensive understanding of the codebase. Let me identify the open
+  questions before proposing a plan:
+
+  Open Questions
+
+  Based on my exploration, I have several questions about the implementation details you'd like:
+
+  1. Keyboard Key Mapping UI/UX
+
+  - Should keyboard mappings appear in the same MIDISignalLogger.vue component alongside MIDI signals,
+   or would you prefer a separate section/tab?
+  - How should we visualize keyboard presses? (Similar visual style to MIDI lanes, or different?)
+
+  2. Keyboard Mapping Behavior
+
+  - For keyboard-to-pad mapping: Should key press/release work like MIDI note on/off (with velocity),
+  or simpler (just press/release without velocity)?
+  - For keyboard-to-switch: Should it toggle on each press, or only activate while held?
+  - Should we allow mapping the same key to multiple controls, or enforce one-key-one-control?
+
+  3. Keyboard Key Identification
+
+  - Should we use event.key (character like "a", "A", "1") or event.code (physical key like "KeyA",
+  "Digit1")?
+  - This affects international keyboards - code is layout-independent, key is what's printed on the
+  key
+
+  4. Persistence Storage Strategy
+
+  - Currently MIDI mappings use localStorage with key "midi-mappings-{artworkName}". Should keyboard
+  mappings:
+    - Be stored in the same structure alongside MIDI sources? (one unified mapping system)
+    - Use a separate storage key?
+  - The mapping data structure currently uses MidiSource - should we rename to generic InputSource or
+  keep MIDI-focused naming?
+
+  5. Vite Link Configuration
+
+  - For the npm link hot-reload issue: Should I configure Vite to:
+    - Add the protocol package to optimizeDeps.exclude?
+    - Use server.fs.allow to permit access outside root?
+    - Both?
+
+  6. IndexedDB vs localStorage
+
+  - You mentioned IndexedDB for storage, but current implementation uses localStorage. Should I:
+    - Migrate to IndexedDB (better for larger datasets, async)?
+    - Keep localStorage (simpler, synchronous)?
+    - IndexedDB offers better performance for complex queries, but localStorage is sufficient for
+  mapping data
+
+  7. Keyboard Mapping Scope
+
+  - Should keyboard mappings only work when the controller has focus, or should we attempt to capture
+  them globally (even when artwork iframe has focus)?
+  - Global capture would require the artwork to forward keyboard events, or use a different approach
+
+  Which of these should I prioritize, and what are your preferences for each?
+
+> 1. yes alongside the same - we want to see all signals at once and select from them. we should 
+rename the logger into signal logger accordingly. at some point we might add filtering for signal 
+types (midi, computer keyboard, etc.) 
+2. on off without velocity. computer keyboards have no velocity usually
+3. we'll have to thing about a solid event architecture that supports different event sources such as 
+midi and computer keyboard. maybe with base clasees etc. 
+4. separate database for controller mappings. and then store mappings like artwork-version:name or so.
+ IndexDB is better than local storage, right? Yea MidiSource.. InputSource or SignalSource.... i think
+ the current architecture and names could use a refactoring. 
+5. add protocol package to controller package this way. and add controller package to 
+./platform/frontend package this way. no need for fs.allow because we link with npm. But watch!    
+watch: {
+      // Watch npm linked packages
+      ignored: ['!**/node_modules/web-mapper/**']
+    }
+6. migrate to indexdb
+7. don't worry about focus. let's assume the controller has focus 
+
+● Perfect! Let me clarify a few more details to ensure I understand the architecture you want:
+                                                                                                     
+● User answered Claude's questions:
+  ⎿  · For the event architecture refactoring, should I create base classes like `InputSignal` (base) 
+     → `MidiSignal` / `KeyboardSignal` (derived) and `InputSource` → `MidiSource` / `KeyboardSource`? 
+     → Yes, create inheritance hierarchy with base classes
+     · For IndexedDB storage structure, should I use separate object stores (tables) for different 
+     mapping sets, or one store with compound keys? → separate store for every artwork. any changes to
+      the mapping should be stored to a 'current' mapping. when loading, the current mapping is 
+     restored
+     · The keyboard-to-switch mapping: should a key press toggle the switch, or should it turn ON 
+     while held and OFF when released? → Toggle on each press (ignore release)
+     · Should the mapping persistence system auto-save current mappings, or require explicit save 
+     actions? → Hybrid: auto-save 'current' + named presets

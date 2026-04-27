@@ -1,0 +1,37 @@
+okay, let's add a new high level control in time-n-controls: modal control. It uses a pad to open up
+modal and the modal contains controls that are otherwise invisible. 
+The modal has a button to close it in the top right corner, and it has a title bar, that contains the
+same name as the pad that opens it. The close button is within that title bar and it's at the right.
+It's 10% high. 
+
+In the controller directory we have to implement the UI with vue. when opening a modal we put a layer
+that blurs the background and then we put the modal inside. the dimensions of the modal [0,100]%
+represent the dimensions it takes of the controls area. Only blur the controls area, not the bar on top
+with midi mapping etc. 
+
+The modal control behaves like a group control in the regard that it contains other controls. 
+
+Read through relevant code and get an understanding of how to implement it. 
+
+Then come back to me and ask open questions. 
+Don't code yet. No changes yet. 
+Ask for clarification first.
+
+---
+
+okay, now let's implement an LFO value high level control. it consists of a fader and a button. the
+button brings up the LFO menu. 
+it contains: a range [0,1] fader, and a time/beat selector and a time fader and two beat faders
+(denominator, divisor for the beat). divisor: 1,2,3,4,5,6,7,8, ... 32. this fader has to be high (100%)
+for good control. decimal places 0. and then a fader 1, ... 16, can be half as high (50%)
+And then a fader for time: 0s...60s
+
+---
+
+yes, correct assumption! thanks if both values are max we get 16/32. 
+also, about the range: how to interpret [0,1]: 
+add an selector control with values "above, around, below". 
+above will use the range between the fader value and range * (gap to the upper limit), around will use
+[value - (gap to bottom) *range, value + (gap to upper)*range] and below will LFO between [value - (gap
+to bottom) *range, value]. value is the value of the fader that is next to the modal button. The high
+level control takes care of combining the different control values with these calulations on getValue()
