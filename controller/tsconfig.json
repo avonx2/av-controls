@@ -1,0 +1,22 @@
+{
+  "include": [
+    "./src/**/*.ts", 
+    "./src/**/*.vue"
+, "../platform/src/components/Gallery.vue", "../platform/src/components/GalleryEntry.vue", "../platform/src/components/LayerEntry.vue", "../platform/src/components/WebsiteInput.vue", "../platform/src/views/Mixer.vue", "../platform/src/views/SingleController.vue", "../platform/src/net-receiver.ts", "../platform/src/net-sender.ts", "../platform/src/components/LinkedArtworkPrompt.vue"  ],
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.node.json"
+    },
+    {
+      "path": "./tsconfig.app.json"
+    }
+  ], 
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }, 
+    "lib": ["ES2016", "DOM"]
+  }
+}

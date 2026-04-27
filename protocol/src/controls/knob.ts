@@ -1,0 +1,120 @@
+import * as Base from './base';
+import { SignalParsingError } from '../error';
+
+export class Signal extends Base.Signal {
+  constructor(
+    public value: number,
+  ) {
+    super();
+  }
+  static tryFromAny(payload: any): Signal {
+    if (typeof payload !== 'number') {
+      throw new SignalParsingError(`Invalid signal to Knob: ${JSON.stringify(payload)}`);
+    }
+    return new Signal(payload);
+  }
+}
+
+export class Update extends Base.Update {
+  constructor(
+    public value: number,
+  ) {
+    super();
+  }
+}
+
+export class Spec extends Base.Spec {
+  static type = 'knob'
+  public type = Spec.type
+
+  constructor(
+    baseArgs: Base.Args,
+    public initialState: State,
+    public min: number,
+    public max: number,
+    public decimalPlaces: number,
+    public wrap: boolean = false,
+  ) {
+    super(baseArgs);
+  }
+}
+
+
+/**
+ * Knob control receiver (similar to fader)
+ */
+export class Receiver extends Base.Receiver {
+  public value: number;
+
+  constructor(
+    public spec: Spec,
+    public onChange?: (value: number) => void,
+  ) {
+    super();
+    this.value = spec.initialState.value;
+  }
+
+  handleSignal(signal: Signal): void {
+    this.value = signal.value;
+    if (this.onChange) {
+      this.onChange(signal.value);
+    }
+    this.onUpdate(new Update(signal.value));
+  }
+
+  getState(): State {
+    return new State(this.value);
+  }
+
+  restoreState(state: State): void {
+    this.value = state.value;
+    if (this.onChange) {
+      this.onChange(this.value);
+    }
+  }
+}
+
+export class State extends Base.State {
+  constructor(
+    public value: number,
+  ) {
+    super();
+  }
+}
+
+export class Sender extends Base.Sender {
+  value: number
+
+  constructor(
+    public spec: Spec,
+  ) {
+    super()
+    this.value = spec.initialState.value
+  }
+
+  setValue(value: number) {
+    this.value = value
+    this.onSignal(new Signal(value))
+  }
+
+  setNormValue(normValue: number) {
+    const mapped = normValue * (this.spec.max - this.spec.min) + this.spec.min
+    this.setValue(mapped)
+  }
+
+  getNormValue() {
+    return (this.value - this.spec.min) / (this.spec.max - this.spec.min)
+  }
+
+  getState() {
+    return new State(this.value)
+  }
+
+  setState(state: State) {
+    this.setValue(state.value)
+  }
+
+  handleUpdate(update: Update) {
+    this.value = update.value
+  }
+}

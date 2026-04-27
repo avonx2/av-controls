@@ -1,0 +1,17 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "include": [
+    "env.d.ts", 
+    "src/**/*", 
+    "src/**/*.vue", 
+    "src/**/*.ts"
+, "../platform/src/components/Gallery.vue", "../platform/src/components/GalleryEntry.vue", "../platform/src/components/LayerEntry.vue", "../platform/src/components/WebsiteInput.vue", "../platform/src/views/Mixer.vue", "../platform/src/views/SingleController.vue", "../platform/src/net-receiver.ts", "../platform/src/net-sender.ts", "../platform/src/components/LinkedArtworkPrompt.vue"  ],
+  "exclude": ["src/**/__tests__/*"],
+  "compilerOptions": {
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}

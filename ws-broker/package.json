@@ -1,0 +1,25 @@
+{
+  "name": "av-controls-server",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "nodemon"
+  },
+  "author": "felix niemeyer",
+  "license": "UNLICENSED",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "nodemon": "^3.1.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@types/express": "^5.0.0",
+    "@types/ws": "^8.5.14",
+    "av-controls": "^0.5.0",
+    "express": "^4.21.2",
+    "ws": "^8.18.1"
+  }
+}

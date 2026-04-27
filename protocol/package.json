@@ -1,0 +1,15 @@
+{
+  "name": "av-controls",
+  "version": "0.5.0",
+  "description": "this is a protocol for passing audio visual control signals between tabs",
+  "main": "src/index.ts",
+  "author": "felix niemeyer",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc -w"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

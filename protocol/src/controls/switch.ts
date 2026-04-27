@@ -1,0 +1,105 @@
+import * as Base from './base';
+import { UpdateParsingError } from '../error';
+
+export class Signal extends Base.Signal {
+    constructor(
+        public on: boolean,
+    ) {
+        super();
+    }
+    static tryFromAny(payload: any): Signal {
+        const on = payload.on;
+        if (typeof on !== 'boolean') {
+            throw new UpdateParsingError(`on must be a boolean, got ${on}`);
+        }
+        return new Signal(on);
+    }
+}
+
+export class Update extends Base.Update {
+  constructor(
+    public on: boolean,
+  ) {
+    super();
+  }
+}
+
+export class Spec extends Base.Spec {
+  static type = 'switch'
+  public type = Spec.type
+
+  constructor(
+    baseArgs: Base.Args,
+    public initialState: State = new State(false),
+  ) {
+    super(baseArgs);
+  }
+}
+
+export class Receiver extends Base.Receiver {
+  public on: boolean;
+
+  constructor(
+    public spec: Spec,
+    public onToggle?: (on: boolean) => void,
+  ) {
+    super();
+    this.on = spec.initialState.on;
+  }
+
+  handleSignal(payload: Signal): void {
+    this.on = payload.on;
+    if (this.onToggle) {
+      this.onToggle(payload.on);
+    }
+    this.onUpdate(new Update(payload.on));
+  }
+
+  getState(): State {
+    return new State(this.on);
+  }
+
+  restoreState(state: State): void {
+    this.on = state.on;
+    if (this.onToggle) {
+      this.onToggle(this.on);
+    }
+  }
+}
+
+export class State extends Base.State {
+  constructor(
+    public on: boolean,
+  ) {
+    super();
+  }
+}
+
+export class Sender extends Base.Sender {
+  on: boolean
+
+  constructor(
+    public spec: Spec,
+  ) {
+    super()
+    this.on = spec.initialState.on
+  }
+
+  toggle() {
+    this.on = !this.on
+    this.onSignal(new Signal(this.on))
+  }
+
+  getState() {
+    return new State(this.on)
+  }
+
+  setState(state: State) {
+    this.on = state.on
+    this.onSignal(new Signal(this.on))
+  }
+
+  handleUpdate(update: Update) {
+    this.on = update.on
+  }
+}

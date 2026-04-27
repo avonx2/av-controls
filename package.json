@@ -1,0 +1,19 @@
+{
+  "name": "av-controls-monorepo",
+  "private": true,
+  "description": "Workspace root for the open source av-controls stack",
+  "workspaces": [
+    "controller",
+    "protocol",
+    "simple-key-sender",
+    "time-n-controls",
+    "timeline",
+    "ws-broker"
+  ],
+  "scripts": {
+    "dev:controller": "npm run dev --workspace av-controller",
+    "dev:timeline": "npm run dev --workspace av-timeline",
+    "dev:broker": "npm start --workspace av-controls-server",
+    "build": "npm run build --workspaces --if-present"
+  }
+}

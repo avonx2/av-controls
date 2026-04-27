@@ -1,0 +1,216 @@
+#
+- mapping: map to letters
+  - maybe filter by source type (midi, letters)
+
+# ui
+- click preset again to close menu (otherwise keep open!)
+
+# group UI rework
+- no border
+- make tab buttons and area color of child
+
+- faders
+  - switch j and k for fader control up and down
+  - double click / tap to reset
+
+# dots 
+- spacing / padding
+
+# host a development controller
+- handle previous versions as we advance
+- provide a test page that opens localhost
+
+---
+
+- measure frame rate to estimate performance costs of visuals
+
+# Marketplace 
+- Our goal is to build a marketplace for live visuals (web apps) for VJs
+  - The website brings together visual producers and VJs 
+    - Producers perspective
+      - create visuals by uploading them
+        - add tags
+        - set price per hour (20-80 split)
+        - visuals are web apps
+        - upload folder (soundcloud style: disk space limit)
+          - pay for more storage
+        - we host that folder
+      - earn when VJs use your artworks
+    - VJs create a profile
+      - filter by 
+        - tags
+      - exploring is free (preview for free)
+      - pay per usage while performing 
+        - charge per second, show price per hour
+    - Visuals are being previewed as pictures, previewed on hover in iframes. Clicks send random values to all faders. 
+
+- Some aspects are already implemented. 
+- Some new parts have to be implemented. 
+- What's already there: 
+  - A WJ (web jockey) Mixer that opens a new tab where different web apps are loaded into iframes that can be blended together
+    - Both, the mixer as well as the page that contains the iframes are implemented by this web app
+  - A Gallery that shows av-controllable artworks
+  - The AV Controller itself which sends control signals to an artwork in a separate tab
+  - A mode
+
+- Your tasks: 
+
+- tech stack
+  - use vue and typescript for the frontend
+  - node server for the backend
+  - use sqlite for now
+
+- Use vue router and pinia
+  - establish these routes: 
+    - gallery
+    - login
+    - settings
+    - WJ Mixer
+      - mixer (page for managing layers)
+      - layers (page that displays layers as ifames)
+    - controllers
+      - default controller via postmessage
+      - network controller that useses web sockets
+
+- implement login with oauth 
+
+- credit system
+  - give 180 free credits, visual artists choose the price
+  - allow buying credits with stripe, paypal, or metamask
+
+
+# (on solana)
+- NFT Tech 
+  - let's use metaplex' 
+  - use collections to group visuals. 
+  - use master and editions with a configurable immutable max_supply on mint. 
+  - with a solana signature prooving ownership, you can 
+    - log in and edit your profile 
+    - create new visuals 
+    - set the rental price for visuals you own
+- people mint on the platform (using metaplex internally), 
+we index on minting, 
+- The sole content type is a web app: Visuals written JS/TypScript and probably WebGl but any web app is fine
+- solana dev 
+  - use solana cli tools
+  - use testnet for testing without any costs
+  - integrate phantom and also 
+
+Open questions: 
+- how can we set it up for local development and testing (without costs)? 
+- which payment service do we use? should support crypto as well as fiat. Would be nice if people would buy credits and start with a free amount of credits. We implement the youtube / x kind of content economy models. 
+- Does metaplex support editions? let's say as a vj, i want to sell 9 pieces of the same artwork and keep 1 for myself...
+
+
+---
+
+
+- Hmm, eine VJ controller app wäre nice. 
+  - control, das das Senden eines preview bildes erlaubt
+  - app reicht die previews an den control tab weiter
+  - text-eingabe für die URLs, die man verwenden will
+    - Aber eigentlich ist das nicht ideal
+  - die app nutzt einfach iFrames und blendet die mittels opacity
+
+---
+
+- D(it was the commons mkStyleBasis): TBD: reactivity is broken
+
+- D: mapping braucht eine wesentliche überarbeitung
+  - zwei midi signals sollen auf den gleichen control gehen können
+  - ein midi signal soll auf mehrere controls gehen können
+  - midi mappings sollen gespeichert werden
+    - in localStorage anhand der url immer der letzte stand
+    - als export json datei
+      - importieren 
+    - dafür brauchen wir eine Liste mit midi-id => control-id Paaren
+      - mappings an den controls speichern
+
+- page dropdown / tab controller
+
+---
+
+- D: control with keys
+  - tabindex
+  - arrow up down
+
+- "save midi mappings" button
+	- saves mappings as json file for download
+
+---
+
+also, wie mache ich das am besten mit den controllern. 
+Das X und Y und so weiter muss ja nicht verändert werden. 
+
+Allerdings, wenn man sagt, man möchte irgendwann mal die controller buttons auch manipulierbar machen, dann wäre es schon gut, wenn all die info im reactive state ist. 
+
+An welcher Stelle wäre dann das Setup gut? 
+
+Eine setState funktion, die beim Mount der App ausgeführt wird? 
+Die auch dazu benutzt werden kann, einen gespeicherten ControllersState zu laden? 
+
+Sounds good!
+
+- 
+
+Ok, und an welcher Stelle packen wir... 
+Die dings rein? Also die mappings? 
+Sollen sich die Fader das selbst merken? 
+
+Ich will ja auch curves speichern. 
+
+Eigentlich wäre es cool, wenn ich quasi für eine MIDI message ein dict habe, an welche faders die message geht. 
+Und nichts davon braucht reactive zu sein - wobei: ich will eigentlich für einen Fader auch wissen, ob er von irgendwas gesteuert wird, um das Mapping anzeigen und löschen zu können. 
+
+Also. Ich brauch eine map in beide Richtungen. 
+
+- 
+
+Ich will eigentlich, dass unterschiedliche protokolle von hardware controllern unterstützt werden könnten. 
+
+Daher will ich, dass die midi mapping logik abstrahiert ist und außerhalb von dem controllers store liegt. 
+
+Z.B. in App. Was brauche ich dann für ein Interface? 
+Es gibt halt verschiedene Kombinationen von controllern...
+
+Ich mach mal die offensichtlichen: 
+poti/fader auf fader
+key auf key
+
+Ich glaube ich brauche eine Klasse Mapping. 
+Vielleicht muss die auch in ihren eigenen store.
+
+Ein Fader hat dann n Mappings. 
+Ein Mapping kennt den Fader und ist in einem dict zur MIDI Id. 
+
+- 
+
+Hmm, die mappings sollten vielleicht doch auch in einen eigenen store. 
+Denn vielleicht will man sich mal alle anzeigen lassen. 
+Eines Tages. 
+Oder ich lasse sie erstmal hier. 
+
+Man kann sie nur vom Controller aus löschen oder so. 
+Und gespeichert werden sie auch erstmal nicht. 
+
+Oh ja, für die Curves muss das auch in einen eigenen store!
+
+Und damit nicht so viel in App.vue liegt. 
+
+- 
+
+Also gut. Kurz vor knapp nochmal hängen geblieben: 
+Bin nicht sicher, was bei auswahl eines midi signal tracks rüber geschickt werden soll. Eigentlich: typ + id des midi tracks. 
+Nur habe ich diese Datenstruktur noch nicht. 
+
+Ich habe die intern verwendeten Records. 
+Und die signals. Aber unterschiedliche signals gehen auf einen Record. 
+
+Ich glaube, ich sollte einfach bei den Records bleiben. 
+Müsste die dann exportieren. 
+
+- 
+
+Was noch cool wäre, diese parameter, die auch zufällig gesetzt werden neu triggern, aber das ist jetzt zu viel. 
+Meine Ohren tun weh :( 
+Bin grade bei der Jam. 

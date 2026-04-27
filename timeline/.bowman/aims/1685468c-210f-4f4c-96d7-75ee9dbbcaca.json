@@ -1,0 +1,27 @@
+{
+  "id": "1685468c-210f-4f4c-96d7-75ee9dbbcaca",
+  "text": "Replace control search with a lightweight indexed in-memory fuzzy search",
+  "description": "Replace the current linear-scan custom fuzzy matcher with a proper lightweight in-memory indexed fuzzy search implementation. Preserve domain-specific ranking by scoring full control paths and direct control names separately, then combine them so direct name hits rank above broad path-only matches. Explicitly explore ranking full-path score and control-name score independently and multiplying or otherwise combining them to boost controls whose leaf/name and path both match well.",
+  "tags": [
+    "search",
+    "performance",
+    "ui",
+    "fuzzy-search"
+  ],
+  "reflections": [],
+  "supportingConnections": [],
+  "supportedAims": [],
+  "committedIn": [],
+  "status": {
+    "state": "open",
+    "comment": "Requested follow-up after initial custom matcher; target is a lightweight indexed fuzzy search with combined path/name ranking.",
+    "date": 1775288250630
+  },
+  "intrinsicValue": 1000,
+  "cost": 1,
+  "loopWeight": 1,
+  "duration": 1,
+  "costVariance": 0,
+  "valueVariance": 0,
+  "archived": false
+}
