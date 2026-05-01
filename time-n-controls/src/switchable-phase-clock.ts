@@ -57,6 +57,7 @@ export class SwitchablePhaseClock implements PhaseClock {
         this.activeClock = this.autoClock
         break
     }
+    this.activeClock.tick(0)
   }
 
   getActiveSource(): PhaseSource {
