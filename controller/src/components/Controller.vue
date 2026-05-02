@@ -11,6 +11,10 @@ import {
 } from 'av-controls'
 
 import { loadTabState, applyTabState, watchTabChanges } from '../tab-state-persistence'
+import {
+  loadControlStateSnapshot,
+  scheduleControlStateSnapshotSave,
+} from '../control-state-persistence'
 
 
 import Menu from '../components/Menu.vue'
@@ -49,7 +53,14 @@ const emits = defineEmits<{
 }>()
 
 const rootSender = ref<Controls.Base.Sender | undefined>()
-const initialLayoutByPath = ref<Map<string, { x: number; y: number; width: number; height: number }>>(new Map())
+const initialControlSpecByPath = ref<Map<string, {
+  x: number
+  y: number
+  width: number
+  height: number
+  name: string
+  color: string
+}>>(new Map())
 const modalStack = ref<Controls.Modal.Sender[]>([])
 const activeModal = computed(() => modalStack.value.length > 0 ? modalStack.value[modalStack.value.length - 1] : null)
 
@@ -98,10 +109,84 @@ function closeModal() {
 let panelMoveListener: ((event: PointerEvent) => void) | null = null
 let panelUpListener: ((event: PointerEvent) => void) | null = null
 let removeSenderListener: (() => void) | null = null
+let rootSpecificationGeneration = 0
 
 function disposeInputMappings() {
   inputMappings.value?.dispose()
   inputMappings.value = undefined
+}
+
+async function handleRootSpecification(announcement: Messages.RootSpecification) {
+  const generation = ++rootSpecificationGeneration
+  disposeInputMappings()
+  controlledName.value = announcement.name
+
+  const nextRoot = reactive(createSenderFromSpec(announcement.rootControlSpec)) as Controls.Base.Sender
+  nextRoot.setState(announcement.currentState)
+
+  if (!announcement.stateInitialized) {
+    try {
+      const storedState = await loadControlStateSnapshot(announcement.name)
+      if (generation !== rootSpecificationGeneration) {
+        return
+      }
+      if (storedState) {
+        nextRoot.setState(storedState)
+        props.sender.send(new Messages.ControlStateRestore(storedState))
+      }
+    } catch (error) {
+      console.warn('Failed to load persisted control state', error)
+    }
+  } else {
+    scheduleControlStateSnapshotSave(announcement.name, nextRoot.getState())
+  }
+
+  if (generation !== rootSpecificationGeneration) {
+    return
+  }
+
+  rootSender.value = nextRoot
+  rootSender.value.onSignal = (signal: Controls.Base.Signal) => {
+    props.sender.send(new Messages.ControlSignal(signal))
+    if (rootSender.value && controlledName.value) {
+      scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
+    }
+  }
+  rootSender.value.deepForeach((sender) => {
+    sender.onTouch = () => {
+      onControllerTouched(sender)
+    }
+  })
+
+  const initialControlSpec = new Map<string, {
+    x: number
+    y: number
+    width: number
+    height: number
+    name: string
+    color: string
+  }>()
+  rootSender.value.deepForeach((sender) => {
+    const spec = sender.spec
+    initialControlSpec.set(getControlPath(sender), {
+      x: spec.x,
+      y: spec.y,
+      width: spec.width,
+      height: spec.height,
+      name: spec.name,
+      color: spec.color,
+    })
+  })
+  initialControlSpecByPath.value = initialControlSpec
+  inputMappings.value = new InputMappings(controlledName.value, '1.0.0', rootSender.value)
+  inputMappings.value?.connect()
+
+  loadTabState(controlledName.value).then((tabState) => {
+    if (generation === rootSpecificationGeneration && rootSender.value) {
+      applyTabState(rootSender.value, tabState)
+      watchTabChanges(rootSender.value, controlledName.value)
+    }
+  })
 }
 
 function startDragLayoutPanel(event: PointerEvent) {
@@ -155,44 +240,14 @@ onMounted(() => {
   removeSenderListener = props.sender.addListener((data) => {
     const type = data.type
     if(type === Messages.RootSpecification.type) {
-      disposeInputMappings()
       const announcement = data as Messages.RootSpecification
-      controlledName.value = announcement.name
-      rootSender.value = reactive(createSenderFromSpec(announcement.rootControlSpec)) as Controls.Base.Sender
-      // Apply current state (restored from persistence or live value)
-      rootSender.value.setState(announcement.currentState)
-      rootSender.value.onSignal = (signal: Controls.Base.Signal) => {
-        props.sender.send(new Messages.ControlSignal(signal))
-      }
-      rootSender.value.deepForeach((sender) => {
-        sender.onTouch = () => {
-          onControllerTouched(sender)
-        }
-      })
-      const initialLayout = new Map<string, { x: number; y: number; width: number; height: number }>()
-      rootSender.value.deepForeach((sender) => {
-        const spec = sender.spec
-        initialLayout.set(getControlPath(sender), {
-          x: spec.x,
-          y: spec.y,
-          width: spec.width,
-          height: spec.height,
-        })
-      })
-      initialLayoutByPath.value = initialLayout
-      inputMappings.value = new InputMappings(controlledName.value, '1.0.0', rootSender.value)
-      inputMappings.value?.connect()
-
-      // Restore persisted tab state and watch for changes
-      loadTabState(controlledName.value).then((tabState) => {
-        if (rootSender.value) {
-          applyTabState(rootSender.value, tabState)
-          watchTabChanges(rootSender.value, controlledName.value)
-        }
-      })
+      void handleRootSpecification(announcement)
     } else if(type === Messages.ControlUpdate.type) {
       const controlUpdate = data as Messages.ControlUpdate
       rootSender.value?.handleUpdate(controlUpdate.update)
+      if (controlUpdate.origin.kind !== 'artwork' && rootSender.value && controlledName.value) {
+        scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
+      }
     } else if(type === Messages.ArtworkRuntimeStatusMessage.type) {
       // Ignore artwork runtime status messages on the controller side.
     } else if(type === Messages.ArtworkRenderAckMessage.type) {
@@ -434,22 +489,32 @@ function getLayoutReport(): string {
     return ''
   }
 
-  const initialLayout = initialLayoutByPath.value
+  const initialControlSpec = initialControlSpecByPath.value
   const eps = 1e-6
   const lines: string[] = []
   root.deepForeach((sender) => {
     const spec = sender.spec
     const path = getControlPath(sender)
-    const initial = initialLayout.get(path)
-    const changed =
+    const initial = initialControlSpec.get(path)
+    const layoutChanged =
       !initial ||
       Math.abs(spec.x - initial.x) > eps ||
       Math.abs(spec.y - initial.y) > eps ||
       Math.abs(spec.width - initial.width) > eps ||
       Math.abs(spec.height - initial.height) > eps
+    const labelChanged = !initial || spec.name !== initial.name
+    const colorChanged = !initial || spec.color !== initial.color
+    const changed = layoutChanged || labelChanged || colorChanged
     if (changed) {
+      const metadata: string[] = []
+      if (labelChanged) {
+        metadata.push(`label: ${JSON.stringify(spec.name)}`)
+      }
+      if (colorChanged) {
+        metadata.push(`color: ${spec.color}`)
+      }
       lines.push(
-        `${path}: ${formatLayoutValue(spec.x)}, ${formatLayoutValue(spec.y)}, ${formatLayoutValue(spec.width)}, ${formatLayoutValue(spec.height)}`
+        `${path}: ${formatLayoutValue(spec.x)}, ${formatLayoutValue(spec.y)}, ${formatLayoutValue(spec.width)}, ${formatLayoutValue(spec.height)}${metadata.length ? `, ${metadata.join(', ')}` : ''}`
       )
     }
   })

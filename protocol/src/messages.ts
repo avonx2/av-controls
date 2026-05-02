@@ -21,6 +21,7 @@ export class RootSpecification implements Message {
     public name: string,
     public rootControlSpec: Base.Spec,
     public currentState: Base.State,
+    public stateInitialized = false,
   ) {}
 }
 
@@ -50,6 +51,16 @@ export class ControlSignalBatch implements Message {
     public signals: ControlSignalBatchNode[],
     public seq?: number,
     public origin?: UpdateOrigin,
+  ) {}
+}
+
+export class ControlStateRestore implements Message {
+  static type = 'control-state-restore' as const;
+  type = ControlStateRestore.type;
+
+  constructor(
+    public state: Base.State,
+    public origin: UpdateOrigin = { kind: 'controller' },
   ) {}
 }
 

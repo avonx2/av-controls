@@ -48,6 +48,7 @@ type Sender = WebSocket;
 type PanelInfo = {
   spec: RootSpecification;
   currentState: any; // Controls.Base.State (mutable, gets patched on updates)
+  stateInitialized: boolean;
 };
 
 let receiver: WebSocket | null = null;
@@ -213,6 +214,7 @@ function handleReceiverMessage(_ws: WebSocket, message: string) {
         netPanels[msg.id] = {
           spec: msg.rootSpecification,
           currentState: msg.rootSpecification.currentState, // cache mutable state
+          stateInitialized: msg.rootSpecification.stateInitialized,
         };
 
         log(`NetPanel ${msg.id} added`, {
@@ -243,6 +245,15 @@ function handleReceiverMessage(_ws: WebSocket, message: string) {
           const panel = netPanels[panelId];
           if (panel) {
             patchStateAtPath(panel.currentState, path, avMessage.update);
+            panel.stateInitialized = true;
+          }
+        }
+        if (avMessage?.type === 'controller-specification') {
+          const panel = netPanels[panelId];
+          if (panel) {
+            panel.spec = avMessage as RootSpecification;
+            panel.currentState = avMessage.currentState;
+            panel.stateInitialized = avMessage.stateInitialized;
           }
         }
         pruneClosedSubscribers(panelId);
@@ -298,7 +309,8 @@ function handleSenderMessage(ws: WebSocket, message: string) {
           const rootSpec = new RootSpecification(
             panel.spec.name,
             panel.spec.rootControlSpec,
-            panel.currentState  // Send cached/patched currentState
+            panel.currentState,  // Send cached/patched currentState
+            panel.stateInitialized,
           );
           const wrappedRootSpec = new Transports.WebSocket.Messages.WrappedMessage(msg.panelId, rootSpec);
           ws.send(JSON.stringify(wrappedRootSpec));
@@ -422,5 +434,5 @@ function patchStateAtPath(state: any, path: string[], update: any): void {
     console.warn('State child not found during patch:', controlId);
     return;
   }
-  patchStateAtPath(state.states[controlId], restPath, update);
+  patchStateAtPath(state.states[controlId], restPath, update.update);
 }

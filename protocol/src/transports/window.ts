@@ -52,6 +52,7 @@ export class Receiver {
   private persistence: StatePersistence | null = null
   public ready: Promise<void>
   private boundHandlePostMessage: (event: MessageEvent) => void
+  private stateInitialized = false
 
   constructor(
     private otherWindow: Window,
@@ -77,15 +78,17 @@ export class Receiver {
       await this.persistence!.init()
       const storedState = await this.persistence!.loadState()
       this.persistence!.applyStoredState(this.rootReceiver, storedState)
+      this.stateInitialized = storedState.size > 0
     } catch (e) {
       Logger.warn('Failed to load persisted state', { error: e })
     }
 
     // Send spec after applying stored state
-    this.send(new AvControlsMessages.RootSpecification(this.name, this.rootReceiver.spec, this.rootReceiver.getState()))
+    this.sendRootSpecification()
 
     // Hook onUpdate for persistence
     this.rootReceiver.onUpdate = (update: Base.Update) => {
+      this.stateInitialized = true
       const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
       this.send(new AvControlsMessages.ControlUpdate(update, origin))
       this.persistence?.handleUpdate(update)
@@ -93,9 +96,10 @@ export class Receiver {
   }
 
   private initWithoutPersistence(): void {
-    this.send(new AvControlsMessages.RootSpecification(this.name, this.rootReceiver.spec, this.rootReceiver.getState()))
+    this.sendRootSpecification()
 
     this.rootReceiver.onUpdate = (update: Base.Update) => {
+      this.stateInitialized = true
       const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
       this.send(new AvControlsMessages.ControlUpdate(update, origin))
     }
@@ -114,6 +118,15 @@ export class Receiver {
           dispatchSignalBatchToReceiver(this.rootReceiver, (data.message as AvControlsMessages.ControlSignalBatch).signals)
         })
       }
+      if(data.message.type === AvControlsMessages.ControlStateRestore.type && !this.stateInitialized) {
+        const restoreMessage = data.message as AvControlsMessages.ControlStateRestore
+        Base.Receiver.withUpdateOrigin(restoreMessage.origin, () => {
+          this.rootReceiver.restoreState(restoreMessage.state)
+        })
+        this.stateInitialized = true
+        this.persistence?.persistReceiverState(this.rootReceiver)
+        this.sendRootSpecification()
+      }
     }
   }
 
@@ -128,6 +141,15 @@ export class Receiver {
 
   dispose(): void {
     window.removeEventListener('message', this.boundHandlePostMessage)
+  }
+
+  private sendRootSpecification() {
+    this.send(new AvControlsMessages.RootSpecification(
+      this.name,
+      this.rootReceiver.spec,
+      this.rootReceiver.getState(),
+      this.stateInitialized,
+    ))
   }
 }
 

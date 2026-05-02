@@ -408,6 +408,7 @@ abstract class WebSocketClient {
 
 export class Receiver extends WebSocketClient {
   private persistenceByPanel = new Map<string, StatePersistence>()
+  private stateInitializedByPanel = new Map<string, boolean>()
   public ready: Promise<void>
 
   constructor(
@@ -443,6 +444,7 @@ export class Receiver extends WebSocketClient {
           const receiver = this.rootReceivers[id]
           if (receiver) {
             persistence.applyStoredState(receiver, storedState)
+            this.stateInitializedByPanel.set(id, storedState.size > 0)
           }
         } catch (e) {
           Logger.warn('Failed to load persisted state for panel', { panelId: id, error: e })
@@ -470,9 +472,10 @@ export class Receiver extends WebSocketClient {
         panelId: id,
         hasPersistence: Boolean(persistence),
       })
-      this.sendWsMessage(new Messages.AddNetPanel(id, new AvControlsMessages.RootSpecification(id, rootReceiver.spec, rootReceiver.getState())));
+      this.sendWsMessage(new Messages.AddNetPanel(id, this.makeRootSpecification(id, rootReceiver)));
 
       rootReceiver.onUpdate = (update: Base.Update) => {
+        this.stateInitializedByPanel.set(id, true)
         const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
         this.sendWsMessage(new Messages.WrappedMessage(id, new AvControlsMessages.ControlUpdate(update, origin)))
         persistence?.handleUpdate(update)
@@ -503,6 +506,21 @@ export class Receiver extends WebSocketClient {
               })
             }
             break;
+          case AvControlsMessages.ControlStateRestore.type:
+            const restoreMessage = wsMessage.message as AvControlsMessages.ControlStateRestore
+            const restoreReceiver = this.rootReceivers[wsMessage.panelId]
+            if (restoreReceiver && !this.stateInitializedByPanel.get(wsMessage.panelId)) {
+              Base.Receiver.withUpdateOrigin(restoreMessage.origin, () => {
+                restoreReceiver.restoreState(restoreMessage.state)
+              })
+              this.stateInitializedByPanel.set(wsMessage.panelId, true)
+              this.persistenceByPanel.get(wsMessage.panelId)?.persistReceiverState(restoreReceiver)
+              this.sendWsMessage(new Messages.WrappedMessage(
+                wsMessage.panelId,
+                this.makeRootSpecification(wsMessage.panelId, restoreReceiver),
+              ))
+            }
+            break;
           case AvControlsMessages.ArtworkRuntimeCommandMessage.type:
             this.artworkRuntimeHandlers?.[wsMessage.panelId]?.handleMessage(
               wsMessage.message as AvControlsMessages.ArtworkRuntimeCommandMessage,
@@ -528,6 +546,15 @@ export class Receiver extends WebSocketClient {
       return panelIds[0] ?? null
     }
     return null
+  }
+
+  private makeRootSpecification(id: string, rootReceiver: Base.Receiver) {
+    return new AvControlsMessages.RootSpecification(
+      id,
+      rootReceiver.spec,
+      rootReceiver.getState(),
+      this.stateInitializedByPanel.get(id) ?? false,
+    )
   }
 }
 

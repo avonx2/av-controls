@@ -2,7 +2,7 @@ import * as Base from './controls/base'
 
 const DB_NAME = 'av-controls'
 const STORE_NAME = 'control-state'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 export interface PersistenceOptions {
   enabled?: boolean      // default: true
@@ -129,6 +129,9 @@ export class StatePersistence {
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME)
         }
+        if (!db.objectStoreNames.contains('controller-visual-state')) {
+          db.createObjectStore('controller-visual-state')
+        }
       }
     })
   }
@@ -224,6 +227,12 @@ export class StatePersistence {
           console.warn(`Failed to restore state for control at ${pathKey}:`, e)
         }
       }
+    })
+  }
+
+  persistReceiverState(rootReceiver: Base.Receiver): void {
+    walkReceivers(rootReceiver, [], (path, receiver) => {
+      this.scheduleWrite(path.join('/'), receiver.getState())
     })
   }
 
