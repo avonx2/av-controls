@@ -4,10 +4,9 @@ import Control from './controls/Control.vue'
 import Area from './controls/Area.vue'
 
 import {
-  Messages,
   Controls,
-  createSenderFromSpec,
   Transports,
+  ControllerClient as ProtocolControllerClient,
 } from 'av-controls'
 
 import { loadTabState, applyTabState, watchTabChanges } from '../tab-state-persistence'
@@ -108,50 +107,16 @@ function closeModal() {
 
 let panelMoveListener: ((event: PointerEvent) => void) | null = null
 let panelUpListener: ((event: PointerEvent) => void) | null = null
-let removeSenderListener: (() => void) | null = null
-let rootSpecificationGeneration = 0
+let controllerClient: ProtocolControllerClient.ControllerClient | null = null
 
 function disposeInputMappings() {
   inputMappings.value?.dispose()
   inputMappings.value = undefined
 }
 
-async function handleRootSpecification(announcement: Messages.RootSpecification) {
-  const generation = ++rootSpecificationGeneration
-  disposeInputMappings()
-  controlledName.value = announcement.name
-
-  const nextRoot = reactive(createSenderFromSpec(announcement.rootControlSpec)) as Controls.Base.Sender
-  nextRoot.setState(announcement.currentState)
-
-  if (!announcement.stateInitialized) {
-    try {
-      const storedState = await loadControlStateSnapshot(announcement.name)
-      if (generation !== rootSpecificationGeneration) {
-        return
-      }
-      if (storedState) {
-        nextRoot.setState(storedState)
-        props.sender.send(new Messages.ControlStateRestore(storedState))
-      }
-    } catch (error) {
-      console.warn('Failed to load persisted control state', error)
-    }
-  } else {
-    scheduleControlStateSnapshotSave(announcement.name, nextRoot.getState())
-  }
-
-  if (generation !== rootSpecificationGeneration) {
-    return
-  }
-
-  rootSender.value = nextRoot
-  rootSender.value.onSignal = (signal: Controls.Base.Signal) => {
-    props.sender.send(new Messages.ControlSignal(signal))
-    if (rootSender.value && controlledName.value) {
-      scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
-    }
-  }
+function handleRootSpecification(event: ProtocolControllerClient.ControllerRootSpecEvent) {
+  rootSender.value = event.rootSender
+  controlledName.value = event.name
   rootSender.value.deepForeach((sender) => {
     sender.onTouch = () => {
       onControllerTouched(sender)
@@ -182,7 +147,7 @@ async function handleRootSpecification(announcement: Messages.RootSpecification)
   inputMappings.value?.connect()
 
   loadTabState(controlledName.value).then((tabState) => {
-    if (generation === rootSpecificationGeneration && rootSender.value) {
+    if (rootSender.value === event.rootSender) {
       applyTabState(rootSender.value, tabState)
       watchTabChanges(rootSender.value, controlledName.value)
     }
@@ -237,31 +202,44 @@ provide('openControlEditor', (control: Controls.Base.Sender) => {
 })
 
 onMounted(() => {
-  removeSenderListener = props.sender.addListener((data) => {
-    const type = data.type
-    if(type === Messages.RootSpecification.type) {
-      const announcement = data as Messages.RootSpecification
-      void handleRootSpecification(announcement)
-    } else if(type === Messages.ControlUpdate.type) {
-      const controlUpdate = data as Messages.ControlUpdate
-      rootSender.value?.handleUpdate(controlUpdate.update)
-      if (controlUpdate.origin.kind !== 'artwork' && rootSender.value && controlledName.value) {
-        scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
+  controllerClient = new ProtocolControllerClient.ControllerClient(props.sender, {
+    wrapRootSender: (sender) => reactive(sender) as Controls.Base.Sender,
+    loadInitialState: async (announcement) => {
+      disposeInputMappings()
+      controlledName.value = announcement.name
+      try {
+        return await loadControlStateSnapshot(announcement.name)
+      } catch (error) {
+        console.warn('Failed to load persisted control state', error)
+        return null
       }
-    } else if(type === Messages.ArtworkRuntimeStatusMessage.type) {
-      // Ignore artwork runtime status messages on the controller side.
-    } else if(type === Messages.ArtworkRenderAckMessage.type) {
-      // Ignore artwork render acknowledgements on the controller side.
-    } else {
-      console.warn('unknown message type in message', data)
-    }
+    },
+    onInitializedState: (name, state) => {
+      disposeInputMappings()
+      controlledName.value = name
+      scheduleControlStateSnapshotSave(name, state)
+    },
   })
+  controllerClient.onRootSpec = handleRootSpecification
+  controllerClient.onControlUpdate = ({ update }) => {
+    if (update.origin.kind !== 'artwork' && rootSender.value && controlledName.value) {
+      scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
+    }
+  }
+  controllerClient.onSignal = () => {
+    if (rootSender.value && controlledName.value) {
+      scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
+    }
+  }
+  controllerClient.onUnknownMessage = (message) => {
+    console.warn('unknown message type in message', message)
+  }
   window.addEventListener('keydown', onKeyDown)
 })
 
 onBeforeUnmount(() => {
-  removeSenderListener?.()
-  removeSenderListener = null
+  controllerClient?.dispose()
+  controllerClient = null
   disposeInputMappings()
   window.removeEventListener('keydown', onKeyDown)
   if (panelMoveListener) {
