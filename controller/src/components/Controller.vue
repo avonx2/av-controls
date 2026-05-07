@@ -85,6 +85,11 @@ const onKeyDown = (event: KeyboardEvent) => {
   if (event.defaultPrevented) {
     return
   }
+  if (event.key === 'Escape' && activeModal.value) {
+    closeModal()
+    event.preventDefault()
+    return
+  }
   if (event.ctrlKey || event.metaKey || event.altKey) {
     return
   }
