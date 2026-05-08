@@ -6,6 +6,8 @@ import {
   ControlStateRestore,
   ControlUpdate,
   RootSpecification,
+  dispatchUpdateTreeToSender,
+  signalToTree,
   type Message,
   type UpdateOrigin,
 } from '../messages';
@@ -80,7 +82,7 @@ export class ControllerClient {
 
   sendSignal(signal: Base.Signal) {
     this.sender.send(new ControlSignal(
-      signal,
+      signalToTree(signal),
       this.nextSeq(),
       { kind: 'controller', clientId: this.clientId },
     ));
@@ -148,7 +150,9 @@ export class ControllerClient {
 
   private handleControlUpdate(update: ControlUpdate) {
     if (this.options.autoHandleUpdates ?? true) {
-      this.rootSender?.handleUpdate(update.update);
+      if (this.rootSender) {
+        dispatchUpdateTreeToSender(this.rootSender, update.update);
+      }
     }
     this.onControlUpdate?.({
       update,

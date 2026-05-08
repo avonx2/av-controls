@@ -64,7 +64,8 @@ export namespace Messages {
     type = PanelList.type;
 
     constructor(
-      public panelIds: string[]
+      public panelIds: string[],
+      public onlinePanelIds: string[] = panelIds,
     ) {}
   }
 
@@ -107,48 +108,19 @@ function logIgnoredUpdateOnlySignal(role: 'sender' | 'receiver') {
   console.info(`[ws:${role}:signal] update-only control received`);
 }
 
-function extractNestedControlUpdatePath(update: any): string[] {
-  const path: string[] = [];
-  let current = update;
-  while (current && typeof current === 'object' && 'controlId' in current && 'update' in current) {
-    path.push(String(current.controlId));
-    current = current.update;
-  }
-  return path;
-}
-
 function shouldIgnoreSignalLogMessage(message: AvControlsMessages.Message): boolean {
   if (message.type !== AvControlsMessages.ControlUpdate.type) {
     return false;
   }
   const updateMessage = message as AvControlsMessages.ControlUpdate;
-  const path = extractNestedControlUpdatePath(updateMessage.update);
-  const leafId = path[path.length - 1];
-  return leafId === 'audioMeter' || leafId === 'phaseCake' || leafId === 'lamp';
-}
-
-function dispatchSignalBatchToReceiver(
-  receiver: Base.Receiver,
-  nodes: AvControlsMessages.ControlSignalBatchNode[],
-) {
-  const controls = 'controls' in receiver && receiver.controls && typeof receiver.controls === 'object'
-    ? receiver.controls as Record<string, Base.Receiver | undefined>
-    : null;
-  if (!controls) {
-    return;
-  }
-  for (const node of nodes) {
-    const child = controls[node.controlId];
-    if (!child) {
-      continue;
-    }
-    if (node.signal !== undefined) {
-      child.handleSignal(node.signal);
-    }
-    if (node.children?.length) {
-      dispatchSignalBatchToReceiver(child, node.children);
-    }
-  }
+  const paths: string[][] = [];
+  AvControlsMessages.walkUpdateTree(updateMessage.update, (path) => {
+    paths.push(path);
+  });
+  return paths.length > 0 && paths.every((path) => {
+    const leafId = path[path.length - 1];
+    return leafId === 'audioMeter' || leafId === 'phaseCake' || leafId === 'lamp';
+  });
 }
 
 /**
@@ -409,6 +381,7 @@ abstract class WebSocketClient {
 export class Receiver extends WebSocketClient {
   private persistenceByPanel = new Map<string, StatePersistence>()
   private stateInitializedByPanel = new Map<string, boolean>()
+  private pendingUpdateTreeByPanel = new Map<string, AvControlsMessages.ControlUpdateTree>()
   public ready: Promise<void>
 
   constructor(
@@ -475,11 +448,45 @@ export class Receiver extends WebSocketClient {
       this.sendWsMessage(new Messages.AddNetPanel(id, this.makeRootSpecification(id, rootReceiver)));
 
       rootReceiver.onUpdate = (update: Base.Update) => {
-        this.stateInitializedByPanel.set(id, true)
-        const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
-        this.sendWsMessage(new Messages.WrappedMessage(id, new AvControlsMessages.ControlUpdate(update, origin)))
-        persistence?.handleUpdate(update)
+        this.handleRootUpdate(id, update, persistence)
       }
+    }
+  }
+
+  private handleRootUpdate(id: string, update: Base.Update, persistence?: StatePersistence): void {
+    this.stateInitializedByPanel.set(id, true)
+    const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
+    const updateTree = AvControlsMessages.updateToTree(update)
+    const pendingTree = this.pendingUpdateTreeByPanel.get(id)
+    if (pendingTree) {
+      AvControlsMessages.mergeUpdateTree(pendingTree, updateTree)
+    } else {
+      this.sendWsMessage(new Messages.WrappedMessage(id, new AvControlsMessages.ControlUpdate(updateTree, origin)))
+    }
+    persistence?.handleUpdate(update)
+  }
+
+  private dispatchSignal(panelId: string, receiver: Base.Receiver, signalMessage: AvControlsMessages.ControlSignal): void {
+    const previousTree = this.pendingUpdateTreeByPanel.get(panelId)
+    const updateTree: AvControlsMessages.ControlUpdateTree = {}
+    this.pendingUpdateTreeByPanel.set(panelId, updateTree)
+    try {
+      Base.Receiver.withUpdateOrigin(signalMessage.origin ?? { kind: 'controller' }, () => {
+        AvControlsMessages.dispatchSignalTreeToReceiver(receiver, signalMessage.signal)
+      })
+    } finally {
+      if (previousTree) {
+        this.pendingUpdateTreeByPanel.set(panelId, previousTree)
+      } else {
+        this.pendingUpdateTreeByPanel.delete(panelId)
+      }
+    }
+
+    if (updateTree.update !== undefined || updateTree.children !== undefined) {
+      this.sendWsMessage(new Messages.WrappedMessage(
+        panelId,
+        new AvControlsMessages.ControlUpdate(updateTree, signalMessage.origin ?? { kind: 'controller' }),
+      ))
     }
   }
 
@@ -492,18 +499,7 @@ export class Receiver extends WebSocketClient {
             const avMessage = wsMessage.message as AvControlsMessages.ControlSignal
             const receiver = this.rootReceivers[wsMessage.panelId]
             if (receiver) {
-              Base.Receiver.withUpdateOrigin(avMessage.origin ?? { kind: 'controller' }, () => {
-                receiver.handleSignal(avMessage.signal)
-              })
-            }
-            break;
-          case AvControlsMessages.ControlSignalBatch.type:
-            const batchMessage = wsMessage.message as AvControlsMessages.ControlSignalBatch
-            const batchReceiver = this.rootReceivers[wsMessage.panelId]
-            if (batchReceiver) {
-              Base.Receiver.withUpdateOrigin(batchMessage.origin ?? { kind: 'controller' }, () => {
-                dispatchSignalBatchToReceiver(batchReceiver, batchMessage.signals)
-              })
+              this.dispatchSignal(wsMessage.panelId, receiver, avMessage)
             }
             break;
           case AvControlsMessages.ControlStateRestore.type:
@@ -561,7 +557,7 @@ export class Receiver extends WebSocketClient {
 export class Sender extends WebSocketClient implements BaseSender {
   panelId: string | null = null
   private isPanelAttached = false
-  private lastSeqByPath = new Map<string, number>()
+  private lastServerSeq = 0
 
   constructor(
     url: string,
@@ -588,7 +584,7 @@ export class Sender extends WebSocketClient implements BaseSender {
   async handleWsMessage(message: Messages.Message): Promise<void> {
     switch(message.type) {
       case Messages.PanelList.type:
-        await this.handlePanelList((message as Messages.PanelList).panelIds)
+        await this.handlePanelList(message as Messages.PanelList)
         break;
       case Messages.WrappedMessage.type:
         const wrapped = message as Messages.WrappedMessage
@@ -596,11 +592,13 @@ export class Sender extends WebSocketClient implements BaseSender {
         if (avMessage.type === AvControlsMessages.RootSpecification.type) {
           this.panelId = wrapped.panelId
           this.isPanelAttached = true
-          this.lastSeqByPath.clear()
+          this.lastServerSeq = typeof avMessage.serverSeq === 'number' ? avMessage.serverSeq : 0
           logWsConnection('sender', 'panel-attached', {
             clientId: this.getClientId(),
             panelId: this.panelId,
             specName: (avMessage as AvControlsMessages.RootSpecification).name,
+            stateInitialized: (avMessage as AvControlsMessages.RootSpecification).stateInitialized,
+            serverSeq: avMessage.serverSeq,
           })
         }
         if (avMessage.type === AvControlsMessages.ControlUpdate.type) {
@@ -615,15 +613,11 @@ export class Sender extends WebSocketClient implements BaseSender {
               update: updateMsg.update,
             })
           }
-          const seq = updateMsg.seq
-          if (typeof seq === 'number') {
-            const path = extractUpdatePath(updateMsg.update)
-            const key = path.join('.')
-            const last = this.lastSeqByPath.get(key) ?? 0
-            if (seq <= last) {
+          if (typeof updateMsg.serverSeq === 'number') {
+            if (updateMsg.serverSeq <= this.lastServerSeq) {
               return
             }
-            this.lastSeqByPath.set(key, seq)
+            this.lastServerSeq = updateMsg.serverSeq
           }
         }
         this.broadcastAvMessage(avMessage); 
@@ -642,16 +636,6 @@ export class Sender extends WebSocketClient implements BaseSender {
           origin: signalMessage.origin,
           seq: signalMessage.seq,
           signal: signalMessage.signal,
-          bufferedAmount: this.getSocketBufferedAmount(),
-        })
-      }
-      if (message.type === AvControlsMessages.ControlSignalBatch.type) {
-        const batchMessage = message as AvControlsMessages.ControlSignalBatch
-        logWsSignal('sender', 'send-control-signal-batch', {
-          panelId: this.panelId,
-          origin: batchMessage.origin,
-          seq: batchMessage.seq,
-          signalCount: batchMessage.signals.length,
           bufferedAmount: this.getSocketBufferedAmount(),
         })
       }
@@ -678,11 +662,14 @@ export class Sender extends WebSocketClient implements BaseSender {
     this.listeners.forEach(listener => listener(message))
   }
 
-  private async handlePanelList(panelIds: string[]): Promise<void> {
+  private async handlePanelList(message: Messages.PanelList): Promise<void> {
+    const panelIds = message.panelIds
+    const onlinePanelIds = message.onlinePanelIds ?? panelIds
     this.senderOptions?.onPanelList?.([...panelIds])
     logWsConnection('sender', 'panel-list', {
       clientId: this.getClientId(),
       panelIds,
+      onlinePanelIds,
       currentPanelId: this.panelId,
       isPanelAttached: this.isPanelAttached,
     })
@@ -690,6 +677,10 @@ export class Sender extends WebSocketClient implements BaseSender {
     if (panelIds.length === 0) {
       this.isPanelAttached = false
       return
+    }
+
+    if (this.panelId && !onlinePanelIds.includes(this.panelId)) {
+      this.isPanelAttached = false
     }
 
     if (this.panelId && panelIds.includes(this.panelId)) {
@@ -717,21 +708,11 @@ export class Sender extends WebSocketClient implements BaseSender {
 
     this.panelId = nextPanelId
     this.isPanelAttached = false
-    this.lastSeqByPath.clear()
+    this.lastServerSeq = 0
     logWsConnection('sender', 'choose-panel', {
       clientId: this.getClientId(),
       panelId: this.panelId,
     })
     this.sendWsMessage(new Messages.ChoosePanel(this.panelId))
   }
-}
-
-function extractUpdatePath(update: any): string[] {
-  const path: string[] = [];
-  let current = update;
-  while (current && typeof current === 'object' && 'controlId' in current && 'update' in current) {
-    path.push(current.controlId);
-    current = current.update;
-  }
-  return path;
 }

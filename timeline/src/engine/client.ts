@@ -142,16 +142,6 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && !Number.isNaN(value);
 }
 
-function extractUpdatePath(update: Controls.Base.Update): { path: ControlPath; leaf: any } {
-  const path: string[] = [];
-  let current: any = update;
-  while (current && typeof current === 'object' && 'controlId' in current && 'update' in current) {
-    path.push(current.controlId);
-    current = current.update;
-  }
-  return { path, leaf: current };
-}
-
 function getSpecRange(spec: Controls.Base.Spec): { min?: number; max?: number; wrap?: boolean } {
   if (spec.type === Controls.Fader.Spec.type || spec.type === Controls.Knob.Spec.type) {
     const s = spec as Controls.Fader.Spec | Controls.Knob.Spec;
@@ -345,53 +335,21 @@ function getSortedTriggerEdgesInRange(triggers: TimelineTrigger[], previousTime:
   return edges;
 }
 
-function buildSignalBatch(nodes: PendingAutomationSignal[]): Messages.ControlSignalBatchNode[] {
-  const roots: Messages.ControlSignalBatchNode[] = [];
-  const rootIndex = new Map<string, Messages.ControlSignalBatchNode>();
+function buildSignalTree(nodes: PendingAutomationSignal[]): Messages.ControlSignalTree {
+  const root: Messages.ControlSignalTree = {};
 
   for (const entry of nodes) {
-    let siblings = roots;
-    let siblingIndex = rootIndex;
-    let currentNode: Messages.ControlSignalBatchNode | null = null;
-
+    let currentNode = root;
     for (let i = 0; i < entry.path.length; i += 1) {
       const controlId = entry.path[i]!;
-      let node = siblingIndex.get(controlId);
-      if (!node) {
-        node = { controlId };
-        siblings.push(node);
-        siblingIndex.set(controlId, node);
-      }
-      currentNode = node;
-      if (i === entry.path.length - 1) {
-        node.signal = entry.leaf;
-      } else {
-        if (!node.children) {
-          node.children = [];
-        }
-        if (!(node as any)._childIndex) {
-          (node as any)._childIndex = new Map<string, Messages.ControlSignalBatchNode>();
-        }
-        siblings = node.children;
-        siblingIndex = (node as any)._childIndex as Map<string, Messages.ControlSignalBatchNode>;
-      }
+      currentNode.children = currentNode.children ?? {};
+      currentNode.children[controlId] = currentNode.children[controlId] ?? {};
+      currentNode = currentNode.children[controlId]!;
     }
-
-    if (currentNode && !currentNode.signal) {
-      currentNode.signal = entry.leaf;
-    }
+    currentNode.signal = entry.leaf;
   }
 
-  const stripIndexes = (entries: Messages.ControlSignalBatchNode[]) => {
-    for (const node of entries) {
-      delete (node as any)._childIndex;
-      if (node.children?.length) {
-        stripIndexes(node.children);
-      }
-    }
-  };
-  stripIndexes(roots);
-  return roots;
+  return root;
 }
 
 function sendPendingSignal(
@@ -399,8 +357,8 @@ function sendPendingSignal(
   pending: PendingAutomationSignal,
   clientId: string,
 ) {
-  sender.send(new Messages.ControlSignalBatch(
-    buildSignalBatch([pending]),
+  sender.send(new Messages.ControlSignal(
+    buildSignalTree([pending]),
     undefined,
     { kind: 'timeline', clientId },
   ));
@@ -444,7 +402,7 @@ export class TimelineClient {
   private lastValues = new Map<string, Record<string, number>>();
   private lastSentSignalSignatures = new Map<string, string>();
   private suppressControllerDisableUntil = new Map<string, number>();
-  private pendingContinuousBatch: Messages.ControlSignalBatch | null = null;
+  private pendingContinuousBatch: Messages.ControlSignal | null = null;
   private pendingContinuousBatchSignatures = new Map<string, string>();
   private flushContinuousBatchTimer: ReturnType<typeof setTimeout> | null = null;
   private removeListener: (() => void) | null = null;
@@ -840,8 +798,8 @@ export class TimelineClient {
 
     if (!shouldBypassBackpressure && bufferedAmount > 0) {
       if (continuousSignals.length > 0) {
-        this.pendingContinuousBatch = new Messages.ControlSignalBatch(
-          buildSignalBatch(continuousSignals),
+        this.pendingContinuousBatch = new Messages.ControlSignal(
+          buildSignalTree(continuousSignals),
           undefined,
           { kind: 'timeline', clientId: this.clientId },
         );
@@ -865,8 +823,8 @@ export class TimelineClient {
       return;
     }
 
-    const batch = new Messages.ControlSignalBatch(
-      buildSignalBatch(signalsToSend),
+    const batch = new Messages.ControlSignal(
+      buildSignalTree(signalsToSend),
       undefined,
       { kind: 'timeline', clientId: this.clientId },
     );
@@ -905,9 +863,9 @@ export class TimelineClient {
       this.pendingContinuousBatchSignatures = new Map();
 
       logSignal('send-batch', {
-        signalCount: pendingBatch.signals.length,
+        signalCount: pendingSignatures.size,
         discreteCount: 0,
-        continuousCount: pendingBatch.signals.length,
+        continuousCount: pendingSignatures.size,
         bufferedAmount,
         source: 'pending-latest',
       });
@@ -949,54 +907,57 @@ export class TimelineClient {
     }
     if (message.type === Messages.ControlUpdate.type) {
       const update = message as ControlUpdate;
-      const { path, leaf } = extractUpdatePath(update.update);
-      const key = getPathKey(path);
-      if (this.ignoredControlPaths.has(key)) {
-        return;
-      }
-      logSignal('receive-update', {
-        path: key,
-        origin: update.origin,
-        seq: update.seq,
-        update: update.update,
-      });
-      const entry = this.controlIndex.get(key);
-      if (entry) {
-        this.lastValues.set(key, {
-          ...(this.lastValues.get(key) ?? {}),
-          ...getControlValues(entry.spec, leaf),
-        });
-      }
-      if (update.origin?.kind === 'controller') {
-        const control = this.findControlState(path);
-        if (control) {
-          const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-          const suppressUntil = this.suppressControllerDisableUntil.get(key) ?? 0;
-          if (suppressUntil > now) {
-            logManualOverride('controller-update-disable-suppressed', {
-              path: key,
-              suppressUntil,
-              now,
-              origin: update.origin,
-              seq: (update as any).seq,
-            });
-            this.onControlUpdate?.(update);
-            return;
-          }
-          const previous = { enabled: control.enabled, manualOverride: control.manualOverride };
-          control.enabled = false;
-          control.manualOverride = true;
-          this.suppressControllerDisableUntil.delete(key);
-          logManualOverride('controller-update-disabled-automation', {
-            path: key,
-            previous,
-            next: { enabled: control.enabled, manualOverride: control.manualOverride },
-            origin: update.origin,
-            seq: (update as any).seq,
-          });
-          this.emitState('snapshot');
+      Messages.walkUpdateTree(update.update, (path, leaf) => {
+        const key = getPathKey(path);
+        if (this.ignoredControlPaths.has(key)) {
+          return;
         }
-      }
+        logSignal('receive-update', {
+          path: key,
+          origin: update.origin,
+          seq: update.seq,
+          serverSeq: update.serverSeq,
+          update: leaf,
+        });
+        const entry = this.controlIndex.get(key);
+        if (entry) {
+          this.lastValues.set(key, {
+            ...(this.lastValues.get(key) ?? {}),
+            ...getControlValues(entry.spec, leaf),
+          });
+        }
+        if (update.origin?.kind === 'controller') {
+          const control = this.findControlState(path);
+          if (control) {
+            const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+            const suppressUntil = this.suppressControllerDisableUntil.get(key) ?? 0;
+            if (suppressUntil > now) {
+              logManualOverride('controller-update-disable-suppressed', {
+                path: key,
+                suppressUntil,
+                now,
+                origin: update.origin,
+                seq: update.seq,
+                serverSeq: update.serverSeq,
+              });
+              return;
+            }
+            const previous = { enabled: control.enabled, manualOverride: control.manualOverride };
+            control.enabled = false;
+            control.manualOverride = true;
+            this.suppressControllerDisableUntil.delete(key);
+            logManualOverride('controller-update-disabled-automation', {
+              path: key,
+              previous,
+              next: { enabled: control.enabled, manualOverride: control.manualOverride },
+              origin: update.origin,
+              seq: update.seq,
+              serverSeq: update.serverSeq,
+            });
+            this.emitState('snapshot');
+          }
+        }
+      });
       this.onControlUpdate?.(update);
     }
   }

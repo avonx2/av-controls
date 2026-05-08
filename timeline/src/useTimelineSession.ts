@@ -392,16 +392,18 @@ export function useTimelineSession(options: TimelineSessionOptions) {
       }
     }
     timelineClient.value.onControlUpdate = (update) => {
-      const path = options.getNestedControlPath(update.update, 'update')
-      if (path.length) {
-        options.latestControlValues[path.join('.')] = {
-          ...(options.latestControlValues[path.join('.')] ?? {}),
-          ...options.extractLaneValues(update.update),
+      Messages.walkUpdateTree(update.update, (path, leaf) => {
+        if (path.length) {
+          options.latestControlValues[path.join('.')] = {
+            ...(options.latestControlValues[path.join('.')] ?? {}),
+            ...options.extractLaneValues(leaf),
+          }
+          options.latestControlPayloads[path.join('.')] = options.extractAutomationPayload(leaf)
         }
-        options.latestControlPayloads[path.join('.')] = options.extractAutomationPayload(update.update)
-      }
-      if (update.origin?.kind !== 'controller') return
-      if (path.length) options.setLastUpdatedControl(path.join('.'))
+        if (update.origin?.kind === 'controller' && path.length) {
+          options.setLastUpdatedControl(path.join('.'))
+        }
+      })
     }
     timelineClient.value.requestState()
   }

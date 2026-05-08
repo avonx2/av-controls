@@ -5,6 +5,7 @@ import packageJson from '../package.json';
 export interface Message {
   type: string;
   protocol?: string;
+  serverSeq?: number;
 }
 
 export type UpdateOrigin =
@@ -31,28 +32,17 @@ export class ControlSignal implements Message {
   type = ControlSignal.type;
 
   constructor(
-    public signal: Base.Signal,
+    public signal: ControlSignalTree,
     public seq?: number,
     public origin?: UpdateOrigin,
+    public serverSeq?: number,
   ) {}
 }
 
-export type ControlSignalBatchNode = {
-  controlId: string;
+export type ControlSignalTree = {
   signal?: Base.Signal;
-  children?: ControlSignalBatchNode[];
+  children?: Record<string, ControlSignalTree>;
 };
-
-export class ControlSignalBatch implements Message {
-  static type = 'control-signal-batch' as const;
-  type = ControlSignalBatch.type;
-
-  constructor(
-    public signals: ControlSignalBatchNode[],
-    public seq?: number,
-    public origin?: UpdateOrigin,
-  ) {}
-}
 
 export class ControlStateRestore implements Message {
   static type = 'control-state-restore' as const;
@@ -70,10 +60,168 @@ export class ControlUpdate implements Message {
   type = ControlUpdate.type;
 
   constructor(
-    public update: Base.Update,
+    public update: ControlUpdateTree,
     public origin: UpdateOrigin = { kind: 'artwork' },
     public seq?: number,
+    public serverSeq?: number,
   ) {}
+}
+
+export type ControlUpdateTree = {
+  update?: Base.Update;
+  children?: Record<string, ControlUpdateTree>;
+};
+
+export function signalToTree(signal: Base.Signal): ControlSignalTree {
+  const path: string[] = [];
+  let current: any = signal;
+  while (current && typeof current === 'object' && 'controlId' in current && 'signal' in current) {
+    path.push(String(current.controlId));
+    current = current.signal;
+  }
+  return setTreeSignal(path, current as Base.Signal);
+}
+
+export function updateToTree(update: Base.Update): ControlUpdateTree {
+  const path: string[] = [];
+  let current: any = update;
+  while (current && typeof current === 'object' && 'controlId' in current && 'update' in current) {
+    path.push(String(current.controlId));
+    current = current.update;
+  }
+  return setTreeUpdate(path, current as Base.Update);
+}
+
+export function setTreeSignal(path: string[], signal: Base.Signal): ControlSignalTree {
+  const root: ControlSignalTree = {};
+  let node = root;
+  for (const controlId of path) {
+    node.children = node.children ?? {};
+    node.children[controlId] = node.children[controlId] ?? {};
+    node = node.children[controlId]!;
+  }
+  node.signal = signal;
+  return root;
+}
+
+export function setTreeUpdate(path: string[], update: Base.Update): ControlUpdateTree {
+  const root: ControlUpdateTree = {};
+  let node = root;
+  for (const controlId of path) {
+    node.children = node.children ?? {};
+    node.children[controlId] = node.children[controlId] ?? {};
+    node = node.children[controlId]!;
+  }
+  node.update = update;
+  return root;
+}
+
+export function mergeSignalTree(target: ControlSignalTree, source: ControlSignalTree): ControlSignalTree {
+  if (source.signal !== undefined) {
+    target.signal = source.signal;
+  }
+  if (source.children) {
+    target.children = target.children ?? {};
+    for (const controlId in source.children) {
+      target.children[controlId] = mergeSignalTree(
+        target.children[controlId] ?? {},
+        source.children[controlId]!,
+      );
+    }
+  }
+  return target;
+}
+
+export function mergeUpdateTree(target: ControlUpdateTree, source: ControlUpdateTree): ControlUpdateTree {
+  if (source.update !== undefined) {
+    target.update = source.update;
+  }
+  if (source.children) {
+    target.children = target.children ?? {};
+    for (const controlId in source.children) {
+      target.children[controlId] = mergeUpdateTree(
+        target.children[controlId] ?? {},
+        source.children[controlId]!,
+      );
+    }
+  }
+  return target;
+}
+
+export function dispatchSignalTreeToReceiver(receiver: Base.Receiver, tree: ControlSignalTree): void {
+  if (tree.signal !== undefined) {
+    receiver.handleSignal(tree.signal);
+  }
+  const controls = receiverControls(receiver);
+  if (!controls || !tree.children) {
+    return;
+  }
+  for (const controlId in tree.children) {
+    const child = controls[controlId];
+    if (child) {
+      dispatchSignalTreeToReceiver(child, tree.children[controlId]!);
+    }
+  }
+}
+
+export function dispatchUpdateTreeToSender(sender: Base.Sender, tree: ControlUpdateTree): void {
+  if (tree.update !== undefined) {
+    sender.handleUpdate(tree.update);
+  }
+  const senders = senderChildren(sender);
+  if (!senders || !tree.children) {
+    return;
+  }
+  for (const controlId in tree.children) {
+    const child = senders[controlId];
+    if (child) {
+      dispatchUpdateTreeToSender(child, tree.children[controlId]!);
+    }
+  }
+}
+
+export function walkUpdateTree(
+  tree: ControlUpdateTree,
+  visit: (path: string[], update: Base.Update) => void,
+  path: string[] = [],
+): void {
+  if (tree.update !== undefined) {
+    visit(path, tree.update);
+  }
+  if (!tree.children) {
+    return;
+  }
+  for (const controlId in tree.children) {
+    walkUpdateTree(tree.children[controlId]!, visit, [...path, controlId]);
+  }
+}
+
+export function walkSignalTree(
+  tree: ControlSignalTree,
+  visit: (path: string[], signal: Base.Signal) => void,
+  path: string[] = [],
+): void {
+  if (tree.signal !== undefined) {
+    visit(path, tree.signal);
+  }
+  if (!tree.children) {
+    return;
+  }
+  for (const controlId in tree.children) {
+    walkSignalTree(tree.children[controlId]!, visit, [...path, controlId]);
+  }
+}
+
+function receiverControls(receiver: Base.Receiver): Record<string, Base.Receiver | undefined> | null {
+  return 'controls' in receiver && receiver.controls && typeof receiver.controls === 'object'
+    ? receiver.controls as Record<string, Base.Receiver | undefined>
+    : null;
+}
+
+function senderChildren(sender: Base.Sender): Record<string, Base.Sender | undefined> | null {
+  return 'senders' in sender && sender.senders && typeof sender.senders === 'object'
+    ? sender.senders as Record<string, Base.Sender | undefined>
+    : null;
 }
 
 export type ArtworkMode = 'live' | 'playing' | 'paused';

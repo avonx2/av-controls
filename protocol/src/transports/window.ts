@@ -21,30 +21,6 @@ namespace Messages {
   }
 }
 
-function dispatchSignalBatchToReceiver(
-  receiver: Base.Receiver,
-  nodes: AvControlsMessages.ControlSignalBatchNode[],
-) {
-  const controls = 'controls' in receiver && receiver.controls && typeof receiver.controls === 'object'
-    ? receiver.controls as Record<string, Base.Receiver | undefined>
-    : null;
-  if (!controls) {
-    return;
-  }
-  for (const node of nodes) {
-    const child = controls[node.controlId];
-    if (!child) {
-      continue;
-    }
-    if (node.signal !== undefined) {
-      child.handleSignal(node.signal);
-    }
-    if (node.children?.length) {
-      dispatchSignalBatchToReceiver(child, node.children);
-    }
-  }
-}
-
 /**
  * Main receiver class for handling control communication
  */
@@ -53,6 +29,7 @@ export class Receiver {
   public ready: Promise<void>
   private boundHandlePostMessage: (event: MessageEvent) => void
   private stateInitialized = false
+  private pendingUpdateTree: AvControlsMessages.ControlUpdateTree | null = null
 
   constructor(
     private otherWindow: Window,
@@ -87,21 +64,44 @@ export class Receiver {
     this.sendRootSpecification()
 
     // Hook onUpdate for persistence
-    this.rootReceiver.onUpdate = (update: Base.Update) => {
-      this.stateInitialized = true
-      const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
-      this.send(new AvControlsMessages.ControlUpdate(update, origin))
-      this.persistence?.handleUpdate(update)
-    }
+    this.rootReceiver.onUpdate = (update: Base.Update) => this.handleRootUpdate(update)
   }
 
   private initWithoutPersistence(): void {
     this.sendRootSpecification()
 
-    this.rootReceiver.onUpdate = (update: Base.Update) => {
-      this.stateInitialized = true
-      const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
-      this.send(new AvControlsMessages.ControlUpdate(update, origin))
+    this.rootReceiver.onUpdate = (update: Base.Update) => this.handleRootUpdate(update)
+  }
+
+  private handleRootUpdate(update: Base.Update): void {
+    this.stateInitialized = true
+    const origin = Base.Receiver.currentUpdateOrigin() ?? { kind: 'artwork' as const }
+    const updateTree = AvControlsMessages.updateToTree(update)
+    if (this.pendingUpdateTree) {
+      AvControlsMessages.mergeUpdateTree(this.pendingUpdateTree, updateTree)
+    } else {
+      this.send(new AvControlsMessages.ControlUpdate(updateTree, origin))
+    }
+    this.persistence?.handleUpdate(update)
+  }
+
+  private dispatchSignal(signalMessage: AvControlsMessages.ControlSignal): void {
+    const previousTree = this.pendingUpdateTree
+    const updateTree: AvControlsMessages.ControlUpdateTree = {}
+    this.pendingUpdateTree = updateTree
+    try {
+      Base.Receiver.withUpdateOrigin(signalMessage.origin ?? { kind: 'controller' }, () => {
+        AvControlsMessages.dispatchSignalTreeToReceiver(this.rootReceiver, signalMessage.signal)
+      })
+    } finally {
+      this.pendingUpdateTree = previousTree
+    }
+
+    if (updateTree.update !== undefined || updateTree.children !== undefined) {
+      this.send(new AvControlsMessages.ControlUpdate(
+        updateTree,
+        signalMessage.origin ?? { kind: 'controller' },
+      ))
     }
   }
 
@@ -109,14 +109,7 @@ export class Receiver {
     const data = event.data;
     if (data.type === Messages.WrappedMessage.type) {
       if(data.message.type === AvControlsMessages.ControlSignal.type) {
-        Base.Receiver.withUpdateOrigin({ kind: 'controller' }, () => {
-          this.rootReceiver.handleSignal((data.message as AvControlsMessages.ControlSignal).signal)
-        })
-      }
-      if(data.message.type === AvControlsMessages.ControlSignalBatch.type) {
-        Base.Receiver.withUpdateOrigin((data.message as AvControlsMessages.ControlSignalBatch).origin ?? { kind: 'controller' }, () => {
-          dispatchSignalBatchToReceiver(this.rootReceiver, (data.message as AvControlsMessages.ControlSignalBatch).signals)
-        })
+        this.dispatchSignal(data.message as AvControlsMessages.ControlSignal)
       }
       if(data.message.type === AvControlsMessages.ControlStateRestore.type && !this.stateInitialized) {
         const restoreMessage = data.message as AvControlsMessages.ControlStateRestore

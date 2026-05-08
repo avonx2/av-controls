@@ -14,6 +14,10 @@
     "dev:controller": "npm run dev --workspace av-controller",
     "dev:timeline": "npm run dev --workspace av-timeline",
     "dev:broker": "npm start --workspace av-controls-server",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "test-env:check": "node ./scripts/check-test-ports.mjs",
+    "test-env": "npm run test-env:check && ../node_modules/.bin/concurrently -k -n WS-BROKER,FIXTURE -c blue,green \"WS_PORT=18080 npm start --workspace av-controls-server\" \"../node_modules/.bin/vite ./e2e/fixtures --config ./e2e/fixtures/vite.config.ts --host 127.0.0.1 --port 18173\"",
+    "test:wait": "node ./scripts/wait-for-test-env.mjs",
+    "test:e2e": "npm run test:wait && ../node_modules/.bin/playwright test --config ./playwright.config.ts"
   }
 }

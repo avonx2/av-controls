@@ -71,7 +71,7 @@ async function connect() {
 
         rootSender.value = createSenderFromSpec(spec.rootControlSpec)
         rootSender.value.onSignal = (signal: Controls.Base.Signal) => {
-          wsSender.value?.send(new Messages.ControlSignal(signal))
+          wsSender.value?.send(new Messages.ControlSignal(Messages.signalToTree(signal)))
         }
 
         allPads.value = discoverPads(rootSender.value)
@@ -79,7 +79,9 @@ async function connect() {
         loadMappings()
       } else if (type === Messages.ControlUpdate.type) {
         const update = data as Messages.ControlUpdate
-        rootSender.value?.handleUpdate(update.update)
+        if (rootSender.value) {
+          Messages.dispatchUpdateTreeToSender(rootSender.value, update.update)
+        }
       }
     })
     console.log('Listener added')
