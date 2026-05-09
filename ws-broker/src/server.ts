@@ -48,6 +48,7 @@ const parsedWsPort = Number.parseInt(process.env.WS_PORT ?? '', 10);
 const wsPort = Number.isFinite(parsedWsPort) ? parsedWsPort : 8080;
 const wss = new WebSocketServer({ port: wsPort }); 
 log(`🚀 WebSocket server running on port ${wsPort}`);
+let shuttingDown = false;
 
 type Sender = WebSocket;
 
@@ -80,6 +81,10 @@ function getSocketId(ws: WebSocket) {
 }
 
 wss.on('connection', (ws) => {
+  if (shuttingDown) {
+    ws.close(1001, 'broker shutting down');
+    return;
+  }
   log('New WS connection', { socketId: getSocketId(ws) });
 
   ws.onmessage = (event) => {
@@ -121,6 +126,46 @@ wss.on('connection', (ws) => {
     }
   };
 });
+
+function shutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  log('Shutting down WebSocket broker', { signal, clientCount: wss.clients.size });
+
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
+      client.close(1001, 'broker shutting down');
+    }
+  }
+
+  const forceClose = setTimeout(() => {
+    for (const client of wss.clients) {
+      if (client.readyState !== WebSocket.CLOSED) {
+        client.terminate();
+      }
+    }
+    finishShutdown(signal);
+  }, 500);
+
+  wss.close(() => {
+    clearTimeout(forceClose);
+    finishShutdown(signal);
+  });
+}
+
+function finishShutdown(signal: NodeJS.Signals) {
+  if (signal === 'SIGUSR2') {
+    process.kill(process.pid, 'SIGUSR2');
+    return;
+  }
+  process.exit(0);
+}
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
+process.once('SIGUSR2', shutdown);
 
 function errorLog(message: string, data?: unknown) {
   error(message, data);
@@ -240,16 +285,23 @@ function handleReceiverMessage(ws: WebSocket, message: string) {
         // forward the message to all subscribers of the panel
         const panelId = parsed.panelId;
         const avMessage = parsed.message;
+        const sourcePanel = netPanels[panelId];
+        if (!sourcePanel || sourcePanel.receiver !== ws) {
+          warn('Ignoring stale receiver message', {
+            receiverSocketId: getSocketId(ws),
+            panelId,
+            type: avMessage?.type,
+            activeReceiverSocketId: sourcePanel?.receiver ? getSocketId(sourcePanel.receiver) : null,
+          });
+          break;
+        }
         if (avMessage?.type === 'control-update') {
           applyControlUpdate(panelId, avMessage);
         }
         if (avMessage?.type === 'controller-specification') {
-          const panel = netPanels[panelId];
-          if (panel) {
-            panel.spec = avMessage as RootSpecification;
-            panel.currentState = avMessage.currentState;
-            panel.stateInitialized = avMessage.stateInitialized;
-          }
+          sourcePanel.spec = avMessage as RootSpecification;
+          sourcePanel.currentState = avMessage.currentState;
+          sourcePanel.stateInitialized = avMessage.stateInitialized;
         }
         pruneClosedSubscribers(panelId);
         const listeners = panelSubscribers[panelId] || new Set<WebSocket>();

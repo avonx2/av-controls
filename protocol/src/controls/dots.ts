@@ -72,7 +72,10 @@ export class Receiver extends Base.Receiver {
       const value = signal.value as SingleValue;
       this.values[value.index] = value.dot;
     } else if (signal.type === 'full') {
-      this.values = signal.value as FullValue;
+      const value = signal.value ?? (signal as unknown as { dots?: FullValue }).dots;
+      this.values = Array.isArray(value)
+        ? value.map(dot => [...dot] as Dot)
+        : this.spec.initialState.values.map(dot => [...dot] as Dot);
     }
 
     if (this.onDotsChange) {

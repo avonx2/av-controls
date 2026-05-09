@@ -2,11 +2,12 @@ import { Transports } from 'av-controls'
 import { TimelineClient, type TimelineState } from 'av-timeline/src/engine'
 
 const BROKER_URL = 'ws://127.0.0.1:18080'
-const PANEL_ID = 'e2e-artwork'
+const PANEL_ID = new URLSearchParams(window.location.search).get('panelId') ?? 'e2e-artwork'
 
 let sender: Transports.WebSocket.Sender | null = null
 let timelineClient: TimelineClient | null = null
 let rootSpecName: string | null = null
+let bufferedAmount = 0
 const states: TimelineState[] = []
 
 function connect() {
@@ -19,6 +20,7 @@ function connect() {
     async (panelIds) => panelIds.includes(PANEL_ID) ? PANEL_ID : '',
     { autoReconnect: false },
   )
+  sender.getBufferedAmount = () => bufferedAmount
   timelineClient = new TimelineClient(sender, { autoRequestState: false })
   timelineClient.onRootSpec = (spec) => {
     rootSpecName = spec.name
@@ -49,8 +51,30 @@ function addMultiControlCurves() {
   })
 }
 
+function addSwitchTrigger(onTime: number, offTime: number) {
+  timelineClient?.addLane(['main', 'enabled'], {
+    key: 'value',
+    type: 'trigger',
+    enabled: true,
+    triggers: [
+      {
+        on: { t: onTime, value: 1 },
+        off: { t: offTime },
+      },
+    ],
+  })
+}
+
 function applyAutomation(time: number) {
   timelineClient?.applyAutomation(time, { bypassBackpressure: true })
+}
+
+function applyAutomationWithBackpressure(time: number) {
+  timelineClient?.applyAutomation(time)
+}
+
+function setBufferedAmount(value: number) {
+  bufferedAmount = value
 }
 
 function getLastSentMessage() {
@@ -69,7 +93,10 @@ window.avControlsTimeline = {
   dispose,
   addVolumeCurve,
   addMultiControlCurves,
+  addSwitchTrigger,
   applyAutomation,
+  applyAutomationWithBackpressure,
+  setBufferedAmount,
   getRootSpecName: () => rootSpecName,
   getStates: () => [...states],
   getLastSentMessage,
@@ -82,7 +109,10 @@ declare global {
       dispose: () => void
       addVolumeCurve: (points: Array<{ t: number; v: number }>) => void
       addMultiControlCurves: () => void
+      addSwitchTrigger: (onTime: number, offTime: number) => void
       applyAutomation: (time: number) => void
+      applyAutomationWithBackpressure: (time: number) => void
+      setBufferedAmount: (value: number) => void
       getRootSpecName: () => string | null
       getStates: () => TimelineState[]
       getLastSentMessage: () => null

@@ -39,6 +39,12 @@ type PendingAutomationSignal = {
   signature: string;
 };
 
+type PendingAutomationWindow = {
+  fromTime: number;
+  toTime: number;
+  useRenderLanes: boolean;
+};
+
 type TriggerEdge = {
   t: number;
   value: number;
@@ -286,9 +292,10 @@ function buildSignalFromPayload(spec: Controls.Base.Spec, payload: unknown): Con
   }
   if (spec.type === Controls.Dots.Spec.type) {
     const value = payload as Controls.Dots.State | Controls.Dots.Update;
+    const dots = Array.isArray(value.values) ? value.values : [];
     return {
       type: 'full',
-      dots: value.values.map(dot => [dot[0], dot[1]]),
+      value: dots.map(dot => [dot[0], dot[1]]),
     } as Controls.Base.Signal;
   }
   return null;
@@ -352,18 +359,6 @@ function buildSignalTree(nodes: PendingAutomationSignal[]): Messages.ControlSign
   return root;
 }
 
-function sendPendingSignal(
-  sender: TransportSender,
-  pending: PendingAutomationSignal,
-  clientId: string,
-) {
-  sender.send(new Messages.ControlSignal(
-    buildSignalTree([pending]),
-    undefined,
-    { kind: 'timeline', clientId },
-  ));
-}
-
 function createEmptyState(): TimelineState {
   return {
     time: 0,
@@ -402,9 +397,9 @@ export class TimelineClient {
   private lastValues = new Map<string, Record<string, number>>();
   private lastSentSignalSignatures = new Map<string, string>();
   private suppressControllerDisableUntil = new Map<string, number>();
-  private pendingContinuousBatch: Messages.ControlSignal | null = null;
-  private pendingContinuousBatchSignatures = new Map<string, string>();
-  private flushContinuousBatchTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingAutomationWindow: PendingAutomationWindow | null = null;
+  private flushAutomationTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastAutomationSentTime = 0;
   private removeListener: (() => void) | null = null;
 
   public onState: ((event: TimelineStateEvent) => void) | null = null;
@@ -489,6 +484,8 @@ export class TimelineClient {
 
   seek(time: number) {
     this.state.time = Math.max(0, time);
+    this.lastAutomationSentTime = this.state.time;
+    this.clearPendingAutomationWindow();
     this.emitEdit(this.nextSeq());
   }
 
@@ -668,10 +665,24 @@ export class TimelineClient {
   }
 
   applyAutomation(time: number, options?: { useRenderLanes?: boolean; bypassBackpressure?: boolean }) {
-    const previousTime = this.state.time;
-    this.state.time = Math.max(0, time);
+    const currentTime = Math.max(0, time);
     const useRenderLanes = options?.useRenderLanes ?? false;
-    const initialBufferedAmount = this.sender.getBufferedAmount?.() ?? 0;
+    const shouldBypassBackpressure = options?.bypassBackpressure ?? false;
+
+    this.state.time = currentTime;
+    if (!shouldBypassBackpressure && (this.sender.getBufferedAmount?.() ?? 0) > 0) {
+      this.queueAutomationWindow(currentTime, useRenderLanes);
+      return;
+    }
+
+    const fromTime = shouldBypassBackpressure
+      ? this.lastAutomationSentTime
+      : this.pendingAutomationWindow?.fromTime ?? this.lastAutomationSentTime;
+    this.clearPendingAutomationWindow();
+    this.sendAutomationWindow(fromTime, currentTime, useRenderLanes, 'live');
+  }
+
+  private collectAutomationSignals(previousTime: number, currentTime: number, useRenderLanes: boolean) {
     const pendingSignals: PendingAutomationSignal[] = [];
 
     for (const control of this.state.controls) {
@@ -682,11 +693,13 @@ export class TimelineClient {
 
       if (adapter.kind === 'keyframes') {
         const lane = control.lanes.find(candidate => candidate.enabled && candidate.type === 'keyframes');
-        if (!lane || lane.type !== 'keyframes' || !adapter.getKeyframeValueBuffer) continue;
+        if (!lane || lane.type !== 'keyframes') continue;
         const sourceLane = useRenderLanes && lane.renderKeyframes !== undefined
           ? { ...lane, keyframes: lane.renderKeyframes }
           : lane;
-        const payload = adapter.getKeyframeValueBuffer(sourceLane)?.getValue(this.state.time);
+        const payload = adapter.evaluateKeyframes
+          ? adapter.evaluateKeyframes(sourceLane, currentTime)
+          : adapter.getKeyframeValueBuffer?.(sourceLane)?.getValue(currentTime);
         if (payload === null || payload === undefined) continue;
         const leaf = buildSignalFromPayload(entry.spec, payload);
         if (!leaf) continue;
@@ -715,40 +728,36 @@ export class TimelineClient {
           : null;
         if (lane.type === 'trigger' && triggerSource) {
           const key = getPathKey(control.path);
-          const edgeSignals: PendingAutomationSignal[] = [];
-          for (const edge of getSortedTriggerEdgesInRange(triggerSource, previousTime, this.state.time)) {
+          for (const edge of getSortedTriggerEdgesInRange(triggerSource, previousTime, currentTime)) {
             const mapped = getLaneValueMap(entry.spec, this.lastValues.get(key) ?? {}, { value: edge.value });
             const leaf = buildSignalLeaf(entry.spec, mapped);
             if (!leaf) continue;
-            edgeSignals.push({
+            const pending = {
               path: [...control.path],
               key,
               kind: 'trigger',
               leaf,
               values: mapped,
               signature: getSignalSignature(leaf),
-            });
-          }
-          for (const pending of edgeSignals) {
+            } satisfies PendingAutomationSignal;
             logSignal('send-trigger-edge', {
               path: pending.key,
               value: pending.values,
-              time: this.state.time,
+              time: currentTime,
             });
-            sendPendingSignal(this.sender, pending, this.clientId);
+            pendingSignals.push(pending);
             this.lastValues.set(key, pending.values ?? {});
-            this.lastSentSignalSignatures.set(key, pending.signature);
           }
         }
         const value = lane.type === 'trigger'
-          ? getTriggerLaneValueBuffer(triggerSource ?? []).getValue(this.state.time)
+          ? getTriggerLaneValueBuffer(triggerSource ?? []).getValue(currentTime)
           : (() => {
               const points = (isBezierCurveLane(lane) || isStepLane(lane)) && useRenderLanes && lane.renderPoints !== undefined
                 ? lane.renderPoints
                 : lane.points;
               return isStepLane(lane)
-                ? getStepLaneValueBuffer(points, range.min, range.max).getValue(this.state.time)
-                : getPlaybackLaneSampleBuffer(points, range.min, range.max, range.wrap ?? false).getValue(this.state.time);
+                ? getStepLaneValueBuffer(points, range.min, range.max).getValue(currentTime)
+                : getPlaybackLaneSampleBuffer(points, range.min, range.max, range.wrap ?? false).getValue(currentTime);
             })();
         if (value === null) continue;
         laneValues[lane.key] = value;
@@ -775,11 +784,23 @@ export class TimelineClient {
       });
     }
 
+    return pendingSignals;
+  }
+
+  private sendAutomationWindow(
+    previousTime: number,
+    currentTime: number,
+    useRenderLanes: boolean,
+    source: 'live' | 'pending-latest',
+  ) {
+    this.state.time = currentTime;
+    const pendingSignals = this.collectAutomationSignals(previousTime, currentTime, useRenderLanes);
     if (pendingSignals.length === 0) {
+      this.lastAutomationSentTime = currentTime;
       return;
     }
 
-    const bufferedAmount = this.sender.getBufferedAmount?.() ?? initialBufferedAmount;
+    const bufferedAmount = this.sender.getBufferedAmount?.() ?? 0;
     const discreteSignals: PendingAutomationSignal[] = [];
     const continuousSignals: PendingAutomationSignal[] = [];
     for (const pending of pendingSignals) {
@@ -791,91 +812,71 @@ export class TimelineClient {
       }
     }
 
-    const shouldBypassBackpressure = options?.bypassBackpressure ?? false;
-    const signalsToSend = !shouldBypassBackpressure && bufferedAmount > 0
-      ? discreteSignals
-      : pendingSignals;
-
-    if (!shouldBypassBackpressure && bufferedAmount > 0) {
-      if (continuousSignals.length > 0) {
-        this.pendingContinuousBatch = new Messages.ControlSignal(
-          buildSignalTree(continuousSignals),
-          undefined,
-          { kind: 'timeline', clientId: this.clientId },
-        );
-        this.pendingContinuousBatchSignatures = new Map(
-          continuousSignals.map(signal => [signal.key, signal.signature]),
-        );
-        this.schedulePendingContinuousBatchFlush();
-      }
-      for (const pending of continuousSignals) {
-        logSignal('send-skipped', {
-          path: pending.key,
-          kind: pending.kind,
-          reason: 'backpressure-buffered-latest',
-          bufferedAmount,
-          values: pending.values,
-        });
-      }
-    }
-
-    if (signalsToSend.length === 0) {
-      return;
-    }
-
     const batch = new Messages.ControlSignal(
-      buildSignalTree(signalsToSend),
+      buildSignalTree(pendingSignals),
       undefined,
       { kind: 'timeline', clientId: this.clientId },
     );
     logSignal('send-batch', {
-      signalCount: signalsToSend.length,
+      signalCount: pendingSignals.length,
       discreteCount: discreteSignals.length,
       continuousCount: continuousSignals.length,
       bufferedAmount,
+      fromTime: previousTime,
+      toTime: currentTime,
+      source,
     });
     this.sender.send(batch);
-    for (const signal of signalsToSend) {
+    for (const signal of pendingSignals) {
       this.lastSentSignalSignatures.set(signal.key, signal.signature);
+    }
+    this.lastAutomationSentTime = currentTime;
+  }
+
+  private queueAutomationWindow(toTime: number, useRenderLanes: boolean) {
+    const fromTime = this.pendingAutomationWindow?.fromTime ?? this.lastAutomationSentTime;
+    this.pendingAutomationWindow = { fromTime, toTime, useRenderLanes };
+    logSignal('send-skipped', {
+      reason: 'backpressure-buffered-latest',
+      bufferedAmount: this.sender.getBufferedAmount?.() ?? 0,
+      fromTime,
+      toTime,
+      useRenderLanes,
+    });
+    this.schedulePendingAutomationFlush();
+  }
+
+  private clearPendingAutomationWindow() {
+    this.pendingAutomationWindow = null;
+    if (this.flushAutomationTimer !== null) {
+      clearTimeout(this.flushAutomationTimer);
+      this.flushAutomationTimer = null;
     }
   }
 
-  private schedulePendingContinuousBatchFlush() {
-    if (this.flushContinuousBatchTimer !== null) {
+  private schedulePendingAutomationFlush() {
+    if (this.flushAutomationTimer !== null) {
       return;
     }
 
     const pump = () => {
-      this.flushContinuousBatchTimer = null;
-      if (!this.pendingContinuousBatch) {
+      this.flushAutomationTimer = null;
+      if (!this.pendingAutomationWindow) {
         return;
       }
 
       const bufferedAmount = this.sender.getBufferedAmount?.() ?? 0;
       if (bufferedAmount > 0) {
-        this.flushContinuousBatchTimer = setTimeout(pump, 16);
+        this.flushAutomationTimer = setTimeout(pump, 16);
         return;
       }
 
-      const pendingBatch = this.pendingContinuousBatch;
-      const pendingSignatures = this.pendingContinuousBatchSignatures;
-      this.pendingContinuousBatch = null;
-      this.pendingContinuousBatchSignatures = new Map();
-
-      logSignal('send-batch', {
-        signalCount: pendingSignatures.size,
-        discreteCount: 0,
-        continuousCount: pendingSignatures.size,
-        bufferedAmount,
-        source: 'pending-latest',
-      });
-      this.sender.send(pendingBatch);
-      for (const [key, signature] of pendingSignatures) {
-        this.lastSentSignalSignatures.set(key, signature);
-      }
+      const pending = this.pendingAutomationWindow;
+      this.pendingAutomationWindow = null;
+      this.sendAutomationWindow(pending.fromTime, pending.toTime, pending.useRenderLanes, 'pending-latest');
     };
 
-    this.flushContinuousBatchTimer = setTimeout(pump, 16);
+    this.flushAutomationTimer = setTimeout(pump, 16);
   }
 
   private buildIndex() {
@@ -963,12 +964,7 @@ export class TimelineClient {
   }
 
   dispose() {
-    if (this.flushContinuousBatchTimer !== null) {
-      clearTimeout(this.flushContinuousBatchTimer);
-      this.flushContinuousBatchTimer = null;
-    }
-    this.pendingContinuousBatch = null;
-    this.pendingContinuousBatchSignatures.clear();
+    this.clearPendingAutomationWindow();
     this.removeListener?.();
     this.removeListener = null;
     this.onState = null;

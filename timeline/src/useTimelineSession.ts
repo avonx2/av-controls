@@ -238,7 +238,7 @@ export function useTimelineSession(options: TimelineSessionOptions) {
     rootSpec.value = null
     isConnected.value = false
     wsSender.value = new Transports.WebSocket.Sender(options.wsUrl.value, options.chooseNetPanel, {
-      autoReconnect: false,
+      autoReconnect: true,
       onPanelList: (ids) => {
         panelIds.value = ids
         if (ids.length === 0) {

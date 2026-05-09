@@ -210,6 +210,64 @@ test('timeline client batches multiple automation leaves into one tree signal', 
   })
 })
 
+test('timeline backpressure collapses to latest continuous values without dropping trigger edges', async ({ browser }) => {
+  const panelId = 'e2e-timeline-backpressure'
+  const artworkPage = await browser.newPage()
+  await artworkPage.goto(fixturePath('artwork.html', panelId))
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => typeof window.avControlsArtwork?.getState === 'function')
+  }).toBe(true)
+
+  const timelinePage = await browser.newPage()
+  await timelinePage.goto(fixturePath('timeline-client.html', panelId))
+  await timelinePage.evaluate(() => window.avControlsTimeline.connect())
+  await expect.poll(async () => {
+    return timelinePage.evaluate(() => window.avControlsTimeline.getRootSpecName())
+  }).toBe(panelId)
+
+  await timelinePage.evaluate(() => {
+    window.avControlsTimeline.addVolumeCurve([
+      { t: 0, v: 0 },
+      { t: 1, v: 1 },
+    ])
+    window.avControlsTimeline.addSwitchTrigger(0.3, 2)
+    window.avControlsTimeline.setBufferedAmount(100)
+    window.avControlsTimeline.applyAutomationWithBackpressure(0.25)
+    window.avControlsTimeline.applyAutomationWithBackpressure(0.5)
+  })
+
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => window.avControlsArtwork.getChanges().length)
+  }).toBe(0)
+
+  await timelinePage.evaluate(() => {
+    window.avControlsTimeline.setBufferedAmount(0)
+    window.avControlsTimeline.applyAutomationWithBackpressure(0.75)
+  })
+
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => window.avControlsArtwork.getState())
+  }).toMatchObject({
+    states: {
+      main: {
+        states: {
+          volume: { value: 0.75 },
+          enabled: { on: true },
+        },
+      },
+    },
+  })
+
+  await artworkPage.waitForTimeout(80)
+  const volumeChanges = await artworkPage.evaluate(() => {
+    return window.avControlsArtwork.getChanges()
+      .filter((change) => change.path === 'main.volume')
+      .map((change) => change.value)
+  })
+
+  expect(volumeChanges).toEqual([0.75])
+})
+
 test('nested multi-control signal applies and echoes as one update tree', async ({ browser }) => {
   const { artworkPage, controllerPage } = await openArtworkAndController(browser)
 
@@ -445,4 +503,36 @@ test('offline subscription receives initial state marker and restores stored con
       })
     })
   }).toBe(true)
+})
+
+test('broker ignores stale receiver updates after a replacement artwork owns the panel', async ({ browser }) => {
+  const panelId = 'e2e-stale-receiver'
+  const artworkA = await browser.newPage()
+  await artworkA.goto(fixturePath('artwork.html', panelId))
+  await expect.poll(async () => {
+    return artworkA.evaluate(() => typeof window.avControlsArtwork?.getState === 'function')
+  }).toBe(true)
+
+  const controllerPage = await browser.newPage()
+  await controllerPage.goto(fixturePath('controller.html', panelId))
+  await controllerPage.evaluate(() => window.avControlsController.connect('stale-receiver-controller'))
+  await waitForRootSpec(controllerPage, panelId)
+
+  const artworkB = await browser.newPage()
+  await artworkB.goto(fixturePath('artwork.html', panelId))
+  await expect.poll(async () => {
+    return controllerPage.evaluate(() => window.avControlsController.getRootSpecs().length)
+  }).toBeGreaterThan(1)
+
+  await artworkA.evaluate(() => {
+    window.avControlsArtwork.emitArtworkUpdate('fx.amount', 0.91)
+  })
+  await expectUpdateCountStays(controllerPage, 0)
+
+  await artworkB.evaluate(() => {
+    window.avControlsArtwork.emitArtworkUpdate('fx.amount', 0.42)
+  })
+  await waitForUpdateCount(controllerPage, 1)
+  const update = await controllerPage.evaluate(() => window.avControlsController.getUpdates()[0])
+  expect(updateLeaf(update.update, 'fx.amount')).toEqual({ value: 0.42 })
 })

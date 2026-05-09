@@ -37,6 +37,18 @@ type RenderConfig = {
   frameLimit?: number
 }
 
+type ProjectCompatibilityIssue = {
+  path: string
+  laneKey?: string
+  reason: string
+}
+
+type PendingProjectCompatibilityAction = {
+  title: string
+  issues: ProjectCompatibilityIssue[]
+  proceed: () => Promise<void>
+}
+
 const wsUrl = ref('ws://localhost:8080')
 const fps = ref(60)
 const rafNow = ref(performance.now())
@@ -171,6 +183,7 @@ if (audioElement) {
   audioElement.preload = 'auto'
 }
 const closeProjectMenuSignal = ref(0)
+const pendingProjectCompatibilityAction = ref<PendingProjectCompatibilityAction | null>(null)
 const timelineScrollRef = ref<HTMLElement | null>(null)
 const timelineCursorRef = ref<HTMLElement | null>(null)
 let isTogglingPlay = false
@@ -497,6 +510,13 @@ function closeProjectMenu() {
   closeProjectMenuSignal.value += 1
 }
 
+function formatLaneKind(lane: Timeline.TimelineLane) {
+  if (lane.type === 'keyframes') return 'keyframes'
+  if (lane.type === 'trigger') return 'trigger'
+  if (lane.type === 'step') return 'step'
+  return 'curve'
+}
+
 function buildUiState(): NonNullable<StoredProject['uiState']> {
   return {
     expandedRows: Object.fromEntries(
@@ -713,7 +733,47 @@ function disconnect() {
   stopStatePolling()
 }
 
+function cancelProjectCompatibilityAction() {
+  pendingProjectCompatibilityAction.value = null
+}
+
+async function proceedProjectCompatibilityAction() {
+  const action = pendingProjectCompatibilityAction.value
+  if (!action) return
+  pendingProjectCompatibilityAction.value = null
+  await action.proceed()
+}
+
+async function applyCompatibleProjectState(
+  title: string,
+  state: Timeline.TimelineState,
+  proceed: (compatibleState: Timeline.TimelineState) => Promise<void>,
+) {
+  const compatible = filterProjectStateForCurrentSpec(state)
+  if (!compatible.issues.length) {
+    await proceed(compatible.state)
+    return
+  }
+  pendingProjectCompatibilityAction.value = {
+    title,
+    issues: compatible.issues,
+    proceed: () => proceed(compatible.state),
+  }
+}
+
 function onKeyDown(e: KeyboardEvent) {
+  if (pendingProjectCompatibilityAction.value) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelProjectCompatibilityAction()
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void proceedProjectCompatibilityAction()
+      return
+    }
+  }
   if (
     e.code === 'KeyK'
     && !e.ctrlKey
@@ -2968,14 +3028,95 @@ function normalizeLaneForRow(rowId: string, lane: Timeline.TimelineLane): Timeli
   }
 }
 
-function normalizeProjectState(state: Timeline.TimelineState): Timeline.TimelineState {
-  return {
-    ...state,
-    controls: state.controls.map(control => ({
-      ...control,
-      lanes: control.lanes.map(lane => normalizeLaneForRow(control.path.join('.'), lane)),
-    })),
+function isLaneCompatibleWithRow(rowId: string, lane: Timeline.TimelineLane) {
+  const row = rowById.value.get(rowId)
+  const spec = row?.spec as Controls.Base.Spec | undefined
+  if (!row || !row.hasValue || !spec) {
+    return {
+      compatible: false,
+      reason: row ? 'control is not automatable in the current artwork spec' : 'control is not present in the current artwork spec',
+    }
   }
+
+  const expectedKeys = getControlLaneKeys(rowId)
+  if (!expectedKeys.includes(lane.key)) {
+    return {
+      compatible: false,
+      reason: `lane key "${lane.key}" is not valid for current ${spec.type} control`,
+    }
+  }
+
+  const adapterKind = Timeline.getTimelineAdapter(spec).kind
+  const laneKind = formatLaneKind(lane)
+  const compatible =
+    (adapterKind === 'curve' && laneKind === 'curve')
+    || (adapterKind === 'step' && laneKind === 'step')
+    || (adapterKind === 'trigger' && laneKind === 'trigger')
+    || (adapterKind === 'keyframes' && laneKind === 'keyframes')
+
+  return compatible
+    ? { compatible: true, reason: '' }
+    : {
+      compatible: false,
+      reason: `saved ${laneKind} lane is incompatible with current ${adapterKind} control`,
+    }
+}
+
+function filterProjectStateForCurrentSpec(state: Timeline.TimelineState) {
+  const issues: ProjectCompatibilityIssue[] = []
+  const controls: Timeline.TimelineControl[] = []
+
+  for (const control of state.controls ?? []) {
+    const rowId = control.path.join('.')
+    const row = rowById.value.get(rowId)
+    if (!row) {
+      issues.push({
+        path: rowId || '(root)',
+        reason: 'control is not present in the current artwork spec',
+      })
+      continue
+    }
+    if (!row.hasValue) {
+      issues.push({
+        path: rowId || row.name,
+        reason: 'control is not automatable in the current artwork spec',
+      })
+      continue
+    }
+
+    const lanes: Timeline.TimelineLane[] = []
+    for (const lane of control.lanes ?? []) {
+      const compatibility = isLaneCompatibleWithRow(rowId, lane)
+      if (!compatibility.compatible) {
+        issues.push({
+          path: rowId,
+          laneKey: lane.key,
+          reason: compatibility.reason,
+        })
+        continue
+      }
+      lanes.push(normalizeLaneForRow(rowId, lane))
+    }
+
+    if (lanes.length) {
+      controls.push({
+        ...control,
+        lanes,
+      })
+    }
+  }
+
+  return {
+    state: {
+      ...state,
+      controls,
+    },
+    issues,
+  }
+}
+
+function normalizeProjectState(state: Timeline.TimelineState): Timeline.TimelineState {
+  return filterProjectStateForCurrentSpec(state).state
 }
 
 function addRenderLane(rowId: string, laneKey: string) {
@@ -3327,11 +3468,17 @@ async function loadSelectedProject() {
   if (!selectedProjectKey.value) return
   const project = await loadProject(selectedProjectKey.value)
   if (!project?.state) return
-  projectName.value = project.name
-  await applyProjectState(project.state)
-  await applyAudioTrack(project.audioTrack)
-  applyUiState(project.uiState)
-  closeProjectMenu()
+  await applyCompatibleProjectState(
+    `Load "${project.name}"`,
+    project.state,
+    async (compatibleState) => {
+      projectName.value = project.name
+      await applyProjectState(compatibleState)
+      await applyAudioTrack(project.audioTrack)
+      applyUiState(project.uiState)
+      closeProjectMenu()
+    },
+  )
 }
 
 async function deleteSelectedProject() {
@@ -3429,17 +3576,23 @@ async function handleImportProject(file: File) {
   const project = JSON.parse(text) as StoredProject
   if (!project?.state) return
   const key = `${artworkId.value}::${project.name}`
-  await saveProject({
-    ...project,
-    key,
-    artworkId: artworkId.value,
-    updatedAt: Date.now(),
-  })
-  selectedProjectKey.value = key
-  await refreshProjects()
-  await applyProjectState(project.state)
-  await applyAudioTrack(project.audioTrack)
-  closeProjectMenu()
+  await applyCompatibleProjectState(
+    `Import "${project.name}"`,
+    project.state,
+    async (compatibleState) => {
+      await saveProject({
+        ...project,
+        key,
+        artworkId: artworkId.value,
+        updatedAt: Date.now(),
+      })
+      selectedProjectKey.value = key
+      await refreshProjects()
+      await applyProjectState(compatibleState)
+      await applyAudioTrack(project.audioTrack)
+      closeProjectMenu()
+    },
+  )
 }
 
 onMounted(() => {
@@ -3626,6 +3779,35 @@ watch(artworkClient, (client) => {
       />
     </section>
 
+    <div
+      v-if="pendingProjectCompatibilityAction"
+      class="compatibility-dialog-overlay"
+      @click.self="cancelProjectCompatibilityAction"
+    >
+      <div class="compatibility-dialog" role="dialog" aria-modal="true" aria-labelledby="compatibility-dialog-title">
+        <header class="compatibility-dialog-header">
+          <h2 id="compatibility-dialog-title">{{ pendingProjectCompatibilityAction.title }}</h2>
+          <p>Some saved automation does not match the current artwork controls and will be ignored for this session.</p>
+        </header>
+        <div class="compatibility-issue-list">
+          <div
+            v-for="(issue, index) in pendingProjectCompatibilityAction.issues"
+            :key="`${issue.path}:${issue.laneKey ?? ''}:${index}`"
+            class="compatibility-issue"
+          >
+            <div class="compatibility-issue-path">
+              {{ issue.path }}<span v-if="issue.laneKey"> / {{ issue.laneKey }}</span>
+            </div>
+            <div class="compatibility-issue-reason">{{ issue.reason }}</div>
+          </div>
+        </div>
+        <footer class="compatibility-dialog-actions">
+          <button class="button" @click="cancelProjectCompatibilityAction">Cancel</button>
+          <button class="button compatibility-proceed-button" @click="proceedProjectCompatibilityAction">Proceed</button>
+        </footer>
+      </div>
+    </div>
+
     <RenderDialog
       v-if="showRenderDialog"
       :loop-duration="loopDurationSec"
@@ -3682,6 +3864,82 @@ watch(artworkClient, (client) => {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+}
+
+.compatibility-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 6, 10, 0.72);
+}
+
+.compatibility-dialog {
+  width: min(42rem, 100%);
+  max-height: min(34rem, calc(100vh - 2rem));
+  display: flex;
+  flex-direction: column;
+  background: #151a22;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.5rem;
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.compatibility-dialog-header {
+  padding: 1rem 1rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.compatibility-dialog-header h2 {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.compatibility-dialog-header p {
+  margin: 0;
+  color: rgba(243, 242, 238, 0.72);
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.compatibility-issue-list {
+  overflow: auto;
+  padding: 0.35rem 0;
+}
+
+.compatibility-issue {
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.compatibility-issue-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  color: rgba(123, 220, 255, 0.95);
+  overflow-wrap: anywhere;
+}
+
+.compatibility-issue-reason {
+  margin-top: 0.2rem;
+  color: rgba(243, 242, 238, 0.65);
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
+.compatibility-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.compatibility-proceed-button {
+  background: linear-gradient(135deg, #285a48, #203f35);
 }
 
 .timeline {

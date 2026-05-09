@@ -115,7 +115,7 @@ function getLeftHandleX(index: number) {
   if (!keyframe) return 0
   const prev = getPrev(index)
   if (!prev) return keyframe.x
-  const smooth = clamp01(keyframe.leftSmooth ?? 0.5)
+  const smooth = clamp01(keyframe.leftSmooth ?? 1)
   return keyframe.x - ((keyframe.x - prev.x) * 0.5 * smooth)
 }
 
@@ -124,7 +124,7 @@ function getRightHandleX(index: number) {
   if (!keyframe) return 0
   const next = getNext(index)
   if (!next) return keyframe.x
-  const smooth = clamp01(keyframe.rightSmooth ?? 0.5)
+  const smooth = clamp01(keyframe.rightSmooth ?? 1)
   return keyframe.x + ((next.x - keyframe.x) * 0.5 * smooth)
 }
 
