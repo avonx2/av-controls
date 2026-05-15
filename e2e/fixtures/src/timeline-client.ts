@@ -1,4 +1,4 @@
-import { Transports } from 'av-controls'
+import { Messages, Transports } from 'av-controls'
 import { TimelineClient, type TimelineState } from 'av-timeline/src/engine'
 
 const BROKER_URL = 'ws://127.0.0.1:18080'
@@ -9,11 +9,13 @@ let timelineClient: TimelineClient | null = null
 let rootSpecName: string | null = null
 let bufferedAmount = 0
 const states: TimelineState[] = []
+const updates: Messages.ControlUpdate[] = []
 
 function connect() {
   dispose()
   rootSpecName = null
   states.length = 0
+  updates.length = 0
 
   sender = new Transports.WebSocket.Sender(
     BROKER_URL,
@@ -27,6 +29,9 @@ function connect() {
   }
   timelineClient.onState = (event) => {
     states.push(event.state)
+  }
+  timelineClient.onControlUpdate = (update) => {
+    updates.push(update)
   }
 }
 
@@ -65,6 +70,15 @@ function addSwitchTrigger(onTime: number, offTime: number) {
   })
 }
 
+function addModeSteps(points: Array<{ t: number; v: number }>) {
+  timelineClient?.addLane(['main', 'mode'], {
+    key: 'index',
+    type: 'step',
+    enabled: true,
+    points,
+  })
+}
+
 function applyAutomation(time: number) {
   timelineClient?.applyAutomation(time, { bypassBackpressure: true })
 }
@@ -94,11 +108,13 @@ window.avControlsTimeline = {
   addVolumeCurve,
   addMultiControlCurves,
   addSwitchTrigger,
+  addModeSteps,
   applyAutomation,
   applyAutomationWithBackpressure,
   setBufferedAmount,
   getRootSpecName: () => rootSpecName,
   getStates: () => [...states],
+  getUpdates: () => [...updates],
   getLastSentMessage,
 }
 
@@ -110,11 +126,13 @@ declare global {
       addVolumeCurve: (points: Array<{ t: number; v: number }>) => void
       addMultiControlCurves: () => void
       addSwitchTrigger: (onTime: number, offTime: number) => void
+      addModeSteps: (points: Array<{ t: number; v: number }>) => void
       applyAutomation: (time: number) => void
       applyAutomationWithBackpressure: (time: number) => void
       setBufferedAmount: (value: number) => void
       getRootSpecName: () => string | null
       getStates: () => TimelineState[]
+      getUpdates: () => Messages.ControlUpdate[]
       getLastSentMessage: () => null
     }
   }

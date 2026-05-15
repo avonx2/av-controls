@@ -22,6 +22,7 @@ type TransportSender = {
   send(message: Message): void;
   getBufferedAmount?: () => number;
   addListener(listener: (message: Message) => void): () => void;
+  setClientId?: (clientId: string) => void;
 };
 
 type ControlPath = string[];
@@ -43,11 +44,6 @@ type PendingAutomationWindow = {
   fromTime: number;
   toTime: number;
   useRenderLanes: boolean;
-};
-
-type TriggerEdge = {
-  t: number;
-  value: number;
 };
 
 const manualOverrideLog = typeof window !== 'undefined'
@@ -320,26 +316,26 @@ function canSkipAutomationSignal(spec: Controls.Base.Spec, adapterKind: 'curve' 
   return true;
 }
 
-function getSortedTriggerEdgesInRange(triggers: TimelineTrigger[], previousTime: number, currentTime: number): TriggerEdge[] {
-  if (!(currentTime > previousTime)) {
-    return [];
+function hasTriggerEventInReverseWindow(triggers: TimelineTrigger[], currentTime: number, previousTime: number) {
+  if (!(currentTime < previousTime)) {
+    return false;
   }
-  const edges: TriggerEdge[] = [];
   for (const trigger of triggers) {
-    if (trigger.on.t > previousTime && trigger.on.t <= currentTime) {
-      edges.push({ t: trigger.on.t, value: Math.max(0, trigger.on.value) });
-    }
-    if (trigger.off.t > previousTime && trigger.off.t <= currentTime) {
-      edges.push({ t: trigger.off.t, value: -1 });
+    if (
+      (trigger.on.t > currentTime && trigger.on.t < previousTime)
+      || (trigger.off.t > currentTime && trigger.off.t < previousTime)
+    ) {
+      return true;
     }
   }
-  edges.sort((a, b) => {
-    if (a.t !== b.t) return a.t - b.t;
-    if (a.value >= 0 && b.value < 0) return -1;
-    if (a.value < 0 && b.value >= 0) return 1;
-    return 0;
-  });
-  return edges;
+  return false;
+}
+
+function hasStepEventInReverseWindow(points: TimelinePoint[], currentTime: number, previousTime: number) {
+  if (!(currentTime < previousTime)) {
+    return false;
+  }
+  return points.some(point => point.t > currentTime && point.t < previousTime);
 }
 
 function buildSignalTree(nodes: PendingAutomationSignal[]): Messages.ControlSignalTree {
@@ -410,6 +406,7 @@ export class TimelineClient {
     private sender: TransportSender,
     options?: TimelineClientOptions,
   ) {
+    this.sender.setClientId?.(this.clientId);
     this.removeListener = this.sender.addListener((message: Message) => {
       this.handleMessage(message);
     });
@@ -726,29 +723,21 @@ export class TimelineClient {
         const triggerSource = lane.type === 'trigger'
           ? (useRenderLanes && lane.renderTriggers !== undefined ? lane.renderTriggers : lane.triggers)
           : null;
-        if (lane.type === 'trigger' && triggerSource) {
-          const key = getPathKey(control.path);
-          for (const edge of getSortedTriggerEdgesInRange(triggerSource, previousTime, currentTime)) {
-            const mapped = getLaneValueMap(entry.spec, this.lastValues.get(key) ?? {}, { value: edge.value });
-            const leaf = buildSignalLeaf(entry.spec, mapped);
-            if (!leaf) continue;
-            const pending = {
-              path: [...control.path],
-              key,
-              kind: 'trigger',
-              leaf,
-              values: mapped,
-              signature: getSignalSignature(leaf),
-            } satisfies PendingAutomationSignal;
-            logSignal('send-trigger-edge', {
-              path: pending.key,
-              value: pending.values,
-              time: currentTime,
-            });
-            pendingSignals.push(pending);
-            this.lastValues.set(key, pending.values ?? {});
-          }
-        }
+        if (
+          lane.type === 'trigger'
+          && triggerSource
+          && currentTime < previousTime
+          && !hasTriggerEventInReverseWindow(triggerSource, currentTime, previousTime)
+        ) continue;
+        if (
+          isStepLane(lane)
+          && currentTime < previousTime
+          && !hasStepEventInReverseWindow(
+            useRenderLanes && lane.renderPoints !== undefined ? lane.renderPoints : lane.points,
+            currentTime,
+            previousTime,
+          )
+        ) continue;
         const value = lane.type === 'trigger'
           ? getTriggerLaneValueBuffer(triggerSource ?? []).getValue(currentTime)
           : (() => {

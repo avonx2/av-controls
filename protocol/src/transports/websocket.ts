@@ -29,14 +29,17 @@ export namespace Messages {
     static type = 'register-receiver' as const;
     type = RegisterReceiver.type;
 
-  constructor() {}
+    constructor() {}
   }
 
   export class RegisterSender implements Message {
     static type = 'register-sender' as const;
     type = RegisterSender.type;
+    clientId?: string;
 
-    constructor() {}
+    constructor(clientId?: string) {
+      this.clientId = clientId;
+    }
   }
 
   export class AddNetPanel implements Message {
@@ -148,6 +151,29 @@ export interface WebSocketSenderOptions extends WebSocketAdapterOptions {
    * Observe the latest available panel ids announced by the broker.
    */
   onPanelList?: (panelIds: string[]) => void;
+}
+
+type ArtworkRuntimeHandler = {
+  handleMessage(message: AvControlsMessages.ArtworkRuntimeCommandMessage): void
+}
+
+type SingleReceiverPersistenceOptions = Omit<PersistenceOptions, 'artworkId'> & {
+  artworkId?: string
+}
+
+export interface ReceiverSession {
+  /**
+   * Stable artwork/session id used for broker routing, root specification naming,
+   * and default persistence keys.
+   */
+  id: string
+  receiver: Base.Receiver
+  handleMessage?: (message: AvControlsMessages.ArtworkRuntimeCommandMessage) => void
+  persistence?: SingleReceiverPersistenceOptions
+}
+
+function isReceiverSession(value: ReceiverSession | {[id: string]: Base.Receiver}): value is ReceiverSession {
+  return 'id' in value && 'receiver' in value
 }
 
 /**
@@ -343,6 +369,10 @@ abstract class WebSocketClient {
   protected getSocketBufferedAmount(): number {
     return this.ws?.bufferedAmount ?? 0;
   }
+
+  protected isSocketOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
   
   /**
    * Clean up resources
@@ -382,19 +412,49 @@ export class Receiver extends WebSocketClient {
   private persistenceByPanel = new Map<string, StatePersistence>()
   private stateInitializedByPanel = new Map<string, boolean>()
   private pendingUpdateTreeByPanel = new Map<string, AvControlsMessages.ControlUpdateTree>()
+  private rootReceivers: {[id: string]: Base.Receiver}
+  private artworkRuntimeHandlers?: {[id: string]: ArtworkRuntimeHandler}
+  private persistenceOptions?: {[id: string]: PersistenceOptions}
   public ready: Promise<void>
 
   constructor(
-    private rootReceivers: {[id: string]: Base.Receiver},
+    session: ReceiverSession,
     url: string,
     options?: WebSocketAdapterOptions,
-    private artworkRuntimeHandlers?: {[id: string]: { handleMessage(message: AvControlsMessages.ArtworkRuntimeCommandMessage): void }},
-    private persistenceOptions?: {[id: string]: PersistenceOptions},
+  )
+  constructor(
+    rootReceivers: {[id: string]: Base.Receiver},
+    url: string,
+    options?: WebSocketAdapterOptions,
+    artworkRuntimeHandlers?: {[id: string]: ArtworkRuntimeHandler},
+    persistenceOptions?: {[id: string]: PersistenceOptions},
+  )
+  constructor(
+    sessionOrRootReceivers: ReceiverSession | {[id: string]: Base.Receiver},
+    url: string,
+    options?: WebSocketAdapterOptions,
+    artworkRuntimeHandlers?: {[id: string]: ArtworkRuntimeHandler},
+    persistenceOptions?: {[id: string]: PersistenceOptions},
   ) {
     super(url, options)
 
+    if (isReceiverSession(sessionOrRootReceivers)) {
+      const session = sessionOrRootReceivers
+      this.rootReceivers = { [session.id]: session.receiver }
+      this.artworkRuntimeHandlers = session.handleMessage
+        ? { [session.id]: { handleMessage: session.handleMessage } }
+        : undefined
+      this.persistenceOptions = session.persistence
+        ? { [session.id]: { ...session.persistence, artworkId: session.persistence.artworkId ?? session.id } }
+        : undefined
+    } else {
+      this.rootReceivers = sessionOrRootReceivers
+      this.artworkRuntimeHandlers = artworkRuntimeHandlers
+      this.persistenceOptions = persistenceOptions
+    }
+
     // Initialize persistence for each panel before connecting
-    if (persistenceOptions) {
+    if (this.persistenceOptions) {
       this.ready = this.initPersistence().then(() => {
         this.initialize()
       })
@@ -558,6 +618,7 @@ export class Sender extends WebSocketClient implements BaseSender {
   panelId: string | null = null
   private isPanelAttached = false
   private lastServerSeq = 0
+  private protocolClientId: string | null = null
 
   constructor(
     url: string,
@@ -576,9 +637,24 @@ export class Sender extends WebSocketClient implements BaseSender {
     this.isPanelAttached = false
     logWsConnection('sender', 'register-sender', {
       clientId: this.getClientId(),
+      protocolClientId: this.protocolClientId,
       selectedPanelId: this.panelId,
     })
-    this.sendWsMessage(new Messages.RegisterSender());
+    this.sendWsMessage(new Messages.RegisterSender(this.protocolClientId ?? undefined));
+  }
+
+  setClientId(clientId: string): void {
+    if (this.protocolClientId === clientId) {
+      return
+    }
+    this.protocolClientId = clientId
+    if (this.isSocketOpen()) {
+      this.sendWsMessage(new Messages.RegisterSender(clientId))
+      if (this.panelId) {
+        this.isPanelAttached = false
+        this.sendWsMessage(new Messages.ChoosePanel(this.panelId))
+      }
+    }
   }
 
   async handleWsMessage(message: Messages.Message): Promise<void> {

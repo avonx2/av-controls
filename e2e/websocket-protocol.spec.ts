@@ -173,6 +173,41 @@ test('timeline client automation reaches artwork as tree control signal', async 
   }).toBe(true)
 })
 
+test('timeline client does not receive its own automation echo', async ({ browser }) => {
+  const panelId = 'e2e-timeline-no-self-echo'
+  const artworkPage = await browser.newPage()
+  await artworkPage.goto(fixturePath('artwork.html', panelId))
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => typeof window.avControlsArtwork?.getState === 'function')
+  }).toBe(true)
+
+  const timelinePage = await browser.newPage()
+  await timelinePage.goto(fixturePath('timeline-client.html', panelId))
+  await timelinePage.evaluate(() => window.avControlsTimeline.connect())
+  await expect.poll(async () => {
+    return timelinePage.evaluate(() => window.avControlsTimeline.getRootSpecName())
+  }).toBe(panelId)
+
+  await timelinePage.evaluate(() => {
+    window.avControlsTimeline.addVolumeCurve([
+      { t: 0, v: 0.2 },
+      { t: 1, v: 0.8 },
+    ])
+    window.avControlsTimeline.applyAutomation(1)
+  })
+
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => {
+      return window.avControlsArtwork.getChanges().some((change) => {
+        return change.path === 'main.volume' && change.value === 0.8
+      })
+    })
+  }).toBe(true)
+
+  await timelinePage.waitForTimeout(150)
+  expect(await timelinePage.evaluate(() => window.avControlsTimeline.getUpdates().length)).toBe(0)
+})
+
 test('timeline client batches multiple automation leaves into one tree signal', async ({ browser }) => {
   const artworkPage = await browser.newPage()
   await artworkPage.goto(`${fixtureBaseUrl}/artwork.html`)
@@ -266,6 +301,106 @@ test('timeline backpressure collapses to latest continuous values without droppi
   })
 
   expect(volumeChanges).toEqual([0.75])
+})
+
+test('timeline reverse trigger sampling emits destination state only when crossing an event', async ({ browser }) => {
+  const panelId = 'e2e-timeline-reverse-trigger'
+  const artworkPage = await browser.newPage()
+  await artworkPage.goto(fixturePath('artwork.html', panelId))
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => typeof window.avControlsArtwork?.getState === 'function')
+  }).toBe(true)
+
+  const timelinePage = await browser.newPage()
+  await timelinePage.goto(fixturePath('timeline-client.html', panelId))
+  await timelinePage.evaluate(() => window.avControlsTimeline.connect())
+  await expect.poll(async () => {
+    return timelinePage.evaluate(() => window.avControlsTimeline.getRootSpecName())
+  }).toBe(panelId)
+
+  await timelinePage.evaluate(() => {
+    window.avControlsTimeline.addSwitchTrigger(0.2, 0.8)
+    window.avControlsTimeline.applyAutomation(1)
+    window.avControlsTimeline.applyAutomation(0.5)
+  })
+
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => window.avControlsArtwork.getState())
+  }).toMatchObject({
+    states: {
+      main: {
+        states: {
+          enabled: { on: true },
+        },
+      },
+    },
+  })
+
+  await timelinePage.evaluate(() => {
+    window.avControlsTimeline.applyAutomation(0.6)
+    window.avControlsTimeline.applyAutomation(0.45)
+  })
+  await artworkPage.waitForTimeout(100)
+  expect(await artworkPage.evaluate(() => {
+    return window.avControlsArtwork.getChanges()
+      .filter((change) => change.path === 'main.enabled')
+      .map((change) => change.value)
+  })).toEqual([false, true])
+
+  await timelinePage.evaluate(() => window.avControlsTimeline.applyAutomation(0.1))
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => {
+      return window.avControlsArtwork.getChanges()
+        .filter((change) => change.path === 'main.enabled')
+        .map((change) => change.value)
+    })
+  }).toEqual([false, true, false])
+})
+
+test('timeline reverse selector sampling uses the closest step at or before current time', async ({ browser }) => {
+  const panelId = 'e2e-timeline-reverse-selector'
+  const artworkPage = await browser.newPage()
+  await artworkPage.goto(`${fixturePath('artwork.html', panelId)}&withMode=1`)
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => typeof window.avControlsArtwork?.getState === 'function')
+  }).toBe(true)
+
+  const timelinePage = await browser.newPage()
+  await timelinePage.goto(fixturePath('timeline-client.html', panelId))
+  await timelinePage.evaluate(() => window.avControlsTimeline.connect())
+  await expect.poll(async () => {
+    return timelinePage.evaluate(() => window.avControlsTimeline.getRootSpecName())
+  }).toBe(panelId)
+
+  await timelinePage.evaluate(() => {
+    window.avControlsTimeline.addModeSteps([
+      { t: 0, v: 0 },
+      { t: 0.5, v: 1 },
+      { t: 0.8, v: 2 },
+    ])
+    window.avControlsTimeline.applyAutomation(1)
+    window.avControlsTimeline.applyAutomation(0.5)
+  })
+
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => {
+      return window.avControlsArtwork.getChanges()
+        .filter((change) => change.path === 'main.mode')
+        .map((change) => change.value)
+    })
+  }).toEqual([2, 1])
+
+  await timelinePage.evaluate(() => {
+    window.avControlsTimeline.applyAutomation(0.6)
+    window.avControlsTimeline.applyAutomation(0.45)
+  })
+  await expect.poll(async () => {
+    return artworkPage.evaluate(() => {
+      return window.avControlsArtwork.getChanges()
+        .filter((change) => change.path === 'main.mode')
+        .map((change) => change.value)
+    })
+  }).toEqual([2, 1, 0])
 })
 
 test('nested multi-control signal applies and echoes as one update tree', async ({ browser }) => {

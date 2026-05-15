@@ -6,7 +6,7 @@ type RenderConfig = {
   fps: number
   startTime: number
   endTime: number
-  outputFormat: 'webp' | 'png' | 'mp4-avc' | 'mp4-hevc'
+  outputFormat: 'live' | 'webp' | 'png' | 'mp4-avc' | 'mp4-hevc'
   imageWorkerCount: number
   width?: number
   height?: number
@@ -35,7 +35,7 @@ const endTime = ref(0)
 const overrideResolution = ref(false)
 const width = ref(1024)
 const height = ref(1024)
-const outputFormat = ref<'webp' | 'png' | 'mp4-avc' | 'mp4-hevc'>('webp')
+const outputFormat = ref<'live' | 'webp' | 'png' | 'mp4-avc' | 'mp4-hevc'>('live')
 const imageWorkerCount = ref(Math.min(4, navigator.hardwareConcurrency || 4))
 const quality = ref(0.95)
 const showInstructions = ref(true)
@@ -47,11 +47,13 @@ const totalFrames = computed(() => {
   return Math.ceil(duration * fps.value)
 })
 const estimatedSize = computed(() => {
-  const totalBytes = outputFormat.value === 'png'
-    ? totalFrames.value * 400000
-    : outputFormat.value === 'webp'
-      ? totalFrames.value * quality.value * 100000
-      : totalFrames.value * quality.value * 150000
+  const totalBytes = outputFormat.value === 'live'
+    ? 0
+    : outputFormat.value === 'png'
+      ? totalFrames.value * 400000
+      : outputFormat.value === 'webp'
+        ? totalFrames.value * quality.value * 100000
+        : totalFrames.value * quality.value * 150000
   return (totalBytes / 1024 / 1024).toFixed(1)
 })
 
@@ -73,7 +75,7 @@ function loadSettings() {
       overrideResolution.value = settings.overrideResolution || false
       width.value = settings.width || 1024
       height.value = settings.height || 1024
-      outputFormat.value = settings.outputFormat || 'webp'
+      outputFormat.value = settings.outputFormat || 'live'
       imageWorkerCount.value = settings.imageWorkerCount || Math.min(4, navigator.hardwareConcurrency || 4)
       quality.value = settings.quality || 0.95
     } catch (e) {
@@ -158,13 +160,16 @@ watch(() => props.loopDuration, (newVal) => {
             ? 'Format: {name}-{frame}.png'
             : outputFormat === 'webp'
               ? 'Format: {name}-{frame}.webp'
-              : 'Format: {name}.mp4' }}
+              : outputFormat === 'live'
+                ? 'No files will be written'
+                : 'Format: {name}.mp4' }}
         </span>
       </div>
 
       <div class="render-field">
         <label>Output:</label>
         <select v-model="outputFormat" class="render-select">
+          <option value="live">Live preview (no downloads)</option>
           <option value="webp">WebP sequence</option>
           <option value="png">PNG sequence</option>
           <option value="mp4-avc">MP4 video (H.264)</option>
@@ -231,7 +236,8 @@ watch(() => props.loopDuration, (newVal) => {
 
       <div class="render-info">
         <p><strong>Total frames:</strong> {{ totalFrames }}</p>
-        <p><strong>Estimated size:</strong> ~{{ estimatedSize }} MB</p>
+        <p v-if="outputFormat !== 'live'"><strong>Estimated size:</strong> ~{{ estimatedSize }} MB</p>
+        <p v-else><strong>Estimated size:</strong> no downloads</p>
       </div>
 
       <div class="download-instructions" :class="{ collapsed: !showInstructions }">
@@ -247,6 +253,9 @@ watch(() => props.loopDuration, (newVal) => {
               <li>Disable "Ask where to save each file before downloading"</li>
             </ol>
             <p class="warning">⚠️ All frames will download to this folder automatically</p>
+          </template>
+          <template v-else-if="outputFormat === 'live'">
+            <p>Frames are rendered through the export path at the selected FPS without writing files.</p>
           </template>
           <template v-else>
             <p>The video export writes a single MP4 file after rendering finishes.</p>

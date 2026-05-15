@@ -65,7 +65,7 @@ export function useTimelineSession(options: TimelineSessionOptions) {
   const connecting = ref(false)
   const timelineStateRaw = ref<Timeline.TimelineState | null>(null)
   const timelineState = ref<Timeline.TimelineState | null>(null)
-  const artworkMode = ref<Messages.ArtworkMode>('live')
+  const artworkMode = ref<Messages.ArtworkMode>('artwork-live')
   const timelineTime = ref(0)
   const playing = ref(false)
   const alwaysRender = ref(true)
@@ -187,8 +187,8 @@ export function useTimelineSession(options: TimelineSessionOptions) {
     timelineClient.value.seek(state.time)
     timelineClient.value.applyAutomation(state.time)
     timelineClient.value.setState(state.playing ? 'playing' : 'paused')
-    artworkClient.value?.setMode(state.playing ? 'playing' : 'paused')
-    artworkClient.value?.render(state.time)
+    artworkClient.value?.setMode(state.playing ? 'timeline-live' : 'paused')
+    artworkClient.value?.setTime(state.time)
     isApplyingProject.value = false
   }
 
@@ -418,7 +418,7 @@ export function useTimelineSession(options: TimelineSessionOptions) {
     wsSender.value = null
     timelineClient.value = null
     artworkClient.value = null
-    artworkMode.value = 'live'
+    artworkMode.value = 'artwork-live'
     isConnected.value = false
     connecting.value = false
     panelIds.value = []

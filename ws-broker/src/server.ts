@@ -68,6 +68,7 @@ const senders: Sender[] = [];
 const seqByPanelPath = new Map<string, number>();
 const serverSeqByPanel = new Map<string, number>();
 const receiverPanelIds = new WeakMap<WebSocket, Set<string>>();
+const senderClientIds = new WeakMap<WebSocket, string>();
 let nextSocketId = 1;
 const socketIds = new WeakMap<WebSocket, number>();
 
@@ -109,8 +110,12 @@ wss.on('connection', (ws) => {
           if (!senders.includes(ws)) {
             senders.push(ws);
           }
+          if (typeof deserialized.clientId === 'string' && deserialized.clientId) {
+            senderClientIds.set(ws, deserialized.clientId);
+          }
           log(`It's a sender!`, {
             socketId: getSocketId(ws),
+            clientId: senderClientIds.get(ws) ?? null,
             senderCount: senders.length,
             senderSocketIds: getSenderSocketIds(),
           });
@@ -318,7 +323,18 @@ function handleReceiverMessage(ws: WebSocket, message: string) {
           receiverSocketId: receiver ? getSocketId(receiver) : null,
         });
         const payload = JSON.stringify(parsed);
-        listeners.forEach((subscriber) => subscriber.send(payload));
+        listeners.forEach((subscriber) => {
+          if (shouldSuppressSubscriberEcho(subscriber, avMessage)) {
+            verbose('Suppressing sender echo', {
+              subscriberSocketId: getSocketId(subscriber),
+              clientId: senderClientIds.get(subscriber),
+              type: avMessage.type,
+              path: avMessage.path ?? null,
+            });
+            return;
+          }
+          subscriber.send(payload);
+        });
         break;
     }
   } catch (error) {
@@ -444,6 +460,20 @@ function handleSenderDisconnect(ws: WebSocket) {
     senderCount: senders.length,
     senderSocketIds: getSenderSocketIds(),
   });
+}
+
+function shouldSuppressSubscriberEcho(subscriber: WebSocket, avMessage: any) {
+  if (avMessage?.type !== 'control-update') {
+    return false;
+  }
+  const origin = avMessage.origin;
+  if (!origin || typeof origin !== 'object') {
+    return false;
+  }
+  if (origin.kind !== 'timeline' || typeof origin.clientId !== 'string') {
+    return false;
+  }
+  return senderClientIds.get(subscriber) === origin.clientId;
 }
 
 function extractFirstSignalPath(signal: any): string[] {

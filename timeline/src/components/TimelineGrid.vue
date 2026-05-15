@@ -69,7 +69,7 @@ defineProps({
     required: true,
   },
   visibleAudioMarkerXs: {
-    type: Array as PropType<Array<{ time: number; x: number }>>,
+    type: Array as PropType<Array<{ time: number; x: number; highlighted?: boolean }>>,
     required: true,
   },
   bodyTimeMarkers: {
@@ -149,6 +149,10 @@ defineProps({
     required: true,
   },
   audioFileName: {
+    type: String as PropType<string | null>,
+    default: null,
+  },
+  missingAudioFileName: {
     type: String as PropType<string | null>,
     default: null,
   },
@@ -272,6 +276,10 @@ defineProps({
     type: Function as PropType<(payload: { file: File; markerTime?: number }) => void>,
     required: true,
   },
+  onAudioHoverTime: {
+    type: Function as PropType<(time: number | null) => void>,
+    required: true,
+  },
   toggleAudioMarker: {
     type: Function as PropType<(time: number) => void>,
     required: true,
@@ -335,6 +343,7 @@ defineProps({
       v-for="marker in visibleAudioMarkerXs"
       :key="`audio-marker-${marker.time}`"
       class="timeline-audio-marker"
+      :class="{ highlighted: marker.highlighted }"
       :style="{ left: `calc(var(--label-width) + var(--lane-gap) + ${marker.x}px)` }"
     />
     <div class="timeline-body-grid" aria-hidden="true">
@@ -420,6 +429,8 @@ defineProps({
       :waveform="audioWaveform"
       :duration="audioDuration"
       :file-name="audioFileName"
+      :missing-file-name="missingAudioFileName"
+      @hover:time="onAudioHoverTime"
       @toggle:expanded="toggleAudioExpanded"
       @toggle:snap="toggleAudioSnap"
       @upload="onAudioUpload"
@@ -701,6 +712,10 @@ defineProps({
   border-left: 1px solid #ffc75c80;
   pointer-events: none;
   z-index: 2;
+}
+
+.timeline-audio-marker.highlighted {
+  border-left-color: #f88;
 }
 
 .timeline-empty {

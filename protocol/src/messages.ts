@@ -224,10 +224,13 @@ function senderChildren(sender: Base.Sender): Record<string, Base.Sender | undef
     : null;
 }
 
-export type ArtworkMode = 'live' | 'playing' | 'paused';
+export type ArtworkMode = 'artwork-live' | 'timeline-live' | 'timeline-render' | 'paused';
+export type LegacyArtworkMode = 'live' | 'playing';
+export type ArtworkModeCommand = ArtworkMode | LegacyArtworkMode;
 
 export type ArtworkRuntimeCommand =
-  | { type: 'set-artwork-mode'; mode: ArtworkMode }
+  | { type: 'set-artwork-mode'; mode: ArtworkModeCommand }
+  | { type: 'set-artwork-time'; time: number }
   | { type: 'reset-render-state' }
   | { type: 'configure-image-capture'; workerCount: number }
   | { type: 'start-video-capture'; downloadName: string; fps: number; codec: 'avc' | 'hevc'; quality: number }

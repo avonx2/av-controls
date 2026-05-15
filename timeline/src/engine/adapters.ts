@@ -17,8 +17,14 @@ type Player3DSegment = {
   startTime: number;
   endTime: number;
   duration: number;
+  positionStart: Vec3;
+  positionEnd: Vec3;
+  positionOutVelocity: Vec3;
+  positionInVelocity: Vec3;
   rotationStart: Quaternion;
-  rotationDelta: Vec3;
+  rotationEnd: Quaternion;
+  rotationOutControl: Quaternion;
+  rotationInControl: Quaternion;
 };
 
 type PreparedPlayer3DCurve = {
@@ -43,6 +49,9 @@ export type TimelineAdapter = {
   evaluateKeyframes?: (lane: TimelineLane, time: number) => unknown | null;
   getKeyframeValueBuffer?: (lane: TimelineLane) => KeyframeValueBuffer | null;
 };
+
+const PLAYER3D_CONTINUITY_EPSILON = 1e-3;
+const VECTOR_EPSILON = 1e-8;
 
 function cloneUnknown<T>(value: T): T {
   return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T;
@@ -143,10 +152,13 @@ function slerpQuaternion(a: Quaternion, b: Quaternion, t: number): Quaternion {
   ]);
 }
 
-function squadQuaternion(a: Quaternion, b: Quaternion, s0: Quaternion, s1: Quaternion, t: number): Quaternion {
-  const ab = slerpQuaternion(a, b, t);
-  const ss = slerpQuaternion(s0, s1, t);
-  return slerpQuaternion(ab, ss, 2 * t * (1 - t));
+function sphericalCubicBezier(q0: Quaternion, q1: Quaternion, q2: Quaternion, q3: Quaternion, t: number): Quaternion {
+  const q01 = slerpQuaternion(q0, q1, t);
+  const q12 = slerpQuaternion(q1, q2, t);
+  const q23 = slerpQuaternion(q2, q3, t);
+  const q012 = slerpQuaternion(q01, q12, t);
+  const q123 = slerpQuaternion(q12, q23, t);
+  return slerpQuaternion(q012, q123, t);
 }
 
 function vec3Add(a: Vec3, b: Vec3): Vec3 {
@@ -175,28 +187,8 @@ function vec3Length(a: Vec3): number {
 
 function vec3NormalizeOr(a: Vec3, fallback: Vec3): Vec3 {
   const length = vec3Length(a);
-  if (length <= 1e-8) return fallback;
+  if (length <= VECTOR_EPSILON) return fallback;
   return [a[0] / length, a[1] / length, a[2] / length];
-}
-
-function rotateVec3ByQuat(v: Vec3, q: Quaternion): Vec3 {
-  const u: Vec3 = [q[0], q[1], q[2]];
-  const s = q[3];
-  const uv: Vec3 = [
-    u[1] * v[2] - u[2] * v[1],
-    u[2] * v[0] - u[0] * v[2],
-    u[0] * v[1] - u[1] * v[0],
-  ];
-  const uuv: Vec3 = [
-    u[1] * uv[2] - u[2] * uv[1],
-    u[2] * uv[0] - u[0] * uv[2],
-    u[0] * uv[1] - u[1] * uv[0],
-  ];
-  return [
-    v[0] + 2 * (s * uv[0] + uuv[0]),
-    v[1] + 2 * (s * uv[1] + uuv[1]),
-    v[2] + 2 * (s * uv[2] + uuv[2]),
-  ];
 }
 
 function dotSub(a: Dot, b: Dot): Dot {
@@ -233,6 +225,10 @@ function hermiteDot(p0: Dot, p1: Dot, m0: Dot, m1: Dot, t: number): Dot {
 
 function shapeSegmentParameter(u: number, startSmoothness: number, endSmoothness: number) {
   return clamp01(hermiteScalar(0, 1, startSmoothness, endSmoothness, u));
+}
+
+function lerpNumber(a: number, b: number, t: number) {
+  return a + (b - a) * t;
 }
 
 function findKeyframeSegment(keyframes: TimelineKeyframe[], time: number) {
@@ -324,17 +320,237 @@ function dotsKeyframeSignature(keyframes: ReturnType<typeof sanitizeDotsKeyframe
   })));
 }
 
-function cubicHermiteVec3(p0: Vec3, p1: Vec3, m0: Vec3, m1: Vec3, u: number): Vec3 {
-  return [
-    hermiteScalar(p0[0], p1[0], m0[0], m1[0], u),
-    hermiteScalar(p0[1], p1[1], m0[1], m1[1], u),
-    hermiteScalar(p0[2], p1[2], m0[2], m1[2], u),
-  ];
-}
-
-
 function quaternionRelativeLog(from: Quaternion, to: Quaternion): Vec3 {
   return quaternionLog(quaternionMultiply(quaternionConjugate(from), alignQuaternionHemisphere(from, to)));
+}
+
+function velocityFromDelta(delta: Vec3, duration: number): Vec3 {
+  return vec3Scale(delta, 1 / Math.max(1e-6, duration));
+}
+
+function weightedAverageVelocity(previous: Vec3 | null, previousDuration: number, next: Vec3 | null, nextDuration: number): Vec3 {
+  if (previous && next) {
+    const duration = Math.max(1e-6, previousDuration + nextDuration);
+    return vec3Scale(vec3Add(vec3Scale(previous, previousDuration), vec3Scale(next, nextDuration)), 1 / duration);
+  }
+  return previous ?? next ?? [0, 0, 0];
+}
+
+function normalizePlayer3DContinuity(value: number | undefined) {
+  const continuity = clamp01(value ?? 1);
+  if (continuity <= PLAYER3D_CONTINUITY_EPSILON) return 0;
+  if (continuity >= 1 - PLAYER3D_CONTINUITY_EPSILON) return 1;
+  return (continuity - PLAYER3D_CONTINUITY_EPSILON) / (1 - 2 * PLAYER3D_CONTINUITY_EPSILON);
+}
+
+function player3DEdgeAmount(value: number | undefined) {
+  const sharpness = 1 - normalizePlayer3DContinuity(value);
+  return sharpness * sharpness * sharpness;
+}
+
+function blendVelocityDirection(smoothVelocity: Vec3, edgeVelocity: Vec3, edgeAmount: number): Vec3 {
+  const smoothLength = vec3Length(smoothVelocity);
+  const edgeLength = vec3Length(edgeVelocity);
+  const smoothDirection = smoothLength > VECTOR_EPSILON
+    ? vec3Scale(smoothVelocity, 1 / smoothLength)
+    : null;
+  const edgeDirection = edgeLength > VECTOR_EPSILON
+    ? vec3Scale(edgeVelocity, 1 / edgeLength)
+    : null;
+
+  if (!smoothDirection && !edgeDirection) return [0, 0, 0];
+  if (!smoothDirection) return edgeDirection!;
+  if (!edgeDirection) return smoothDirection;
+  if (edgeAmount <= 0) return smoothDirection;
+  if (edgeAmount >= 1) return edgeDirection;
+
+  return vec3NormalizeOr(
+    vec3Lerp(smoothDirection, edgeDirection, edgeAmount),
+    edgeAmount < 0.5 ? smoothDirection : edgeDirection,
+  );
+}
+
+function resolveKeyframeVelocities(
+  previousVelocity: Vec3 | null,
+  nextVelocity: Vec3 | null,
+  smoothVelocity: Vec3,
+  leftSmooth: number | undefined,
+  rightSmooth: number | undefined,
+) {
+  const leftEdge = player3DEdgeAmount(leftSmooth);
+  const rightEdge = player3DEdgeAmount(rightSmooth);
+  const smoothSpeed = vec3Length(smoothVelocity);
+  let chordSpeed = 0;
+  let chordSpeedCount = 0;
+  let edge = 0;
+  let edgeCount = 0;
+
+  if (previousVelocity) {
+    chordSpeed += vec3Length(previousVelocity);
+    chordSpeedCount += 1;
+    edge += leftEdge;
+    edgeCount += 1;
+  }
+  if (nextVelocity) {
+    chordSpeed += vec3Length(nextVelocity);
+    chordSpeedCount += 1;
+    edge += rightEdge;
+    edgeCount += 1;
+  }
+
+  const targetSpeed = chordSpeedCount > 0 ? chordSpeed / chordSpeedCount : smoothSpeed;
+  const speedEdge = edgeCount > 0 ? edge / edgeCount : 0;
+  // Preserve scalar speed continuity at the keyframe while handles split direction.
+  const sharedSpeed = lerpNumber(smoothSpeed, targetSpeed, speedEdge);
+  const fallbackDirection = vec3NormalizeOr(smoothVelocity, [0, 0, 0]);
+  const inDirection = previousVelocity
+    ? blendVelocityDirection(smoothVelocity, previousVelocity, leftEdge)
+    : nextVelocity
+      ? blendVelocityDirection(smoothVelocity, nextVelocity, rightEdge)
+      : fallbackDirection;
+  const outDirection = nextVelocity
+    ? blendVelocityDirection(smoothVelocity, nextVelocity, rightEdge)
+    : previousVelocity
+      ? blendVelocityDirection(smoothVelocity, previousVelocity, leftEdge)
+      : fallbackDirection;
+
+  return {
+    inVelocity: vec3Scale(inDirection, sharedSpeed),
+    outVelocity: vec3Scale(outDirection, sharedSpeed),
+  };
+}
+
+function solveTridiagonalVec3(lower: number[], diagonal: number[], upper: number[], rhs: Vec3[]) {
+  const count = diagonal.length;
+  const d = diagonal.slice();
+  const b = rhs.map(value => [...value] as Vec3);
+
+  for (let i = 1; i < count; i++) {
+    const denominator = Math.abs(d[i - 1]!) <= VECTOR_EPSILON ? VECTOR_EPSILON : d[i - 1]!;
+    const factor = lower[i]! / denominator;
+    d[i] = d[i]! - factor * upper[i - 1]!;
+    b[i] = vec3Sub(b[i]!, vec3Scale(b[i - 1]!, factor));
+  }
+
+  const result = new Array<Vec3>(count);
+  const lastDenominator = Math.abs(d[count - 1]!) <= VECTOR_EPSILON ? VECTOR_EPSILON : d[count - 1]!;
+  result[count - 1] = vec3Scale(b[count - 1]!, 1 / lastDenominator);
+
+  for (let i = count - 2; i >= 0; i--) {
+    const denominator = Math.abs(d[i]!) <= VECTOR_EPSILON ? VECTOR_EPSILON : d[i]!;
+    result[i] = vec3Scale(vec3Sub(b[i]!, vec3Scale(result[i + 1]!, upper[i]!)), 1 / denominator);
+  }
+
+  return result;
+}
+
+function solveClampedCubicVelocities(
+  keyframes: SanitizedPlayer3DKeyframe[],
+  getValue: (keyframe: SanitizedPlayer3DKeyframe) => Vec3,
+) {
+  const count = keyframes.length;
+  if (count === 1) return [[0, 0, 0] as Vec3];
+
+  const values = keyframes.map(getValue);
+  const durations = values.slice(0, -1).map((_, index) => Math.max(1e-6, keyframes[index + 1]!.t - keyframes[index]!.t));
+  if (count === 2) {
+    const velocity = velocityFromDelta(vec3Sub(values[1]!, values[0]!), durations[0]!);
+    return [velocity, velocity];
+  }
+
+  const lower = new Array<number>(count).fill(0);
+  const diagonal = new Array<number>(count).fill(0);
+  const upper = new Array<number>(count).fill(0);
+  const rhs = new Array<Vec3>(count);
+
+  diagonal[0] = 1;
+  rhs[0] = velocityFromDelta(vec3Sub(values[1]!, values[0]!), durations[0]!);
+  diagonal[count - 1] = 1;
+  rhs[count - 1] = velocityFromDelta(vec3Sub(values[count - 1]!, values[count - 2]!), durations[count - 2]!);
+
+  for (let i = 1; i < count - 1; i++) {
+    const previousDuration = durations[i - 1]!;
+    const nextDuration = durations[i]!;
+    const previousDelta = vec3Sub(values[i]!, values[i - 1]!);
+    const nextDelta = vec3Sub(values[i + 1]!, values[i]!);
+
+    lower[i] = nextDuration;
+    diagonal[i] = 2 * (previousDuration + nextDuration);
+    upper[i] = previousDuration;
+    rhs[i] = vec3Scale(
+      vec3Add(
+        vec3Scale(previousDelta, nextDuration / previousDuration),
+        vec3Scale(nextDelta, previousDuration / nextDuration),
+      ),
+      3,
+    );
+  }
+
+  return solveTridiagonalVec3(lower, diagonal, upper, rhs);
+}
+
+function getPositionVelocities(keyframes: SanitizedPlayer3DKeyframe[]) {
+  const inVelocities: Vec3[] = [];
+  const outVelocities: Vec3[] = [];
+  const smoothVelocities = solveClampedCubicVelocities(keyframes, keyframe => keyframe.value.position);
+
+  for (let i = 0; i < keyframes.length; i++) {
+    const keyframe = keyframes[i]!;
+    const previous = i > 0 ? keyframes[i - 1]! : null;
+    const next = i + 1 < keyframes.length ? keyframes[i + 1]! : null;
+    const previousDuration = previous ? keyframe.t - previous.t : 0;
+    const nextDuration = next ? next.t - keyframe.t : 0;
+    const previousVelocity = previous
+      ? velocityFromDelta(vec3Sub(keyframe.value.position, previous.value.position), previousDuration)
+      : null;
+    const nextVelocity = next
+      ? velocityFromDelta(vec3Sub(next.value.position, keyframe.value.position), nextDuration)
+      : null;
+    const velocities = resolveKeyframeVelocities(
+      previousVelocity,
+      nextVelocity,
+      smoothVelocities[i]!,
+      keyframe.leftSmooth,
+      keyframe.rightSmooth,
+    );
+
+    inVelocities.push(velocities.inVelocity);
+    outVelocities.push(velocities.outVelocity);
+  }
+
+  return { inVelocities, outVelocities };
+}
+
+function getRotationVelocities(keyframes: SanitizedPlayer3DKeyframe[]) {
+  const inVelocities: Vec3[] = [];
+  const outVelocities: Vec3[] = [];
+
+  for (let i = 0; i < keyframes.length; i++) {
+    const keyframe = keyframes[i]!;
+    const previous = i > 0 ? keyframes[i - 1]! : null;
+    const next = i + 1 < keyframes.length ? keyframes[i + 1]! : null;
+    const previousDuration = previous ? keyframe.t - previous.t : 0;
+    const nextDuration = next ? next.t - keyframe.t : 0;
+    const previousVelocity = previous
+      ? velocityFromDelta(vec3Scale(quaternionRelativeLog(keyframe.value.rotation, previous.value.rotation), -1), previousDuration)
+      : null;
+    const nextVelocity = next
+      ? velocityFromDelta(quaternionRelativeLog(keyframe.value.rotation, next.value.rotation), nextDuration)
+      : null;
+    const smoothVelocity = weightedAverageVelocity(previousVelocity, previousDuration, nextVelocity, nextDuration);
+    const velocities = resolveKeyframeVelocities(
+      previousVelocity,
+      nextVelocity,
+      smoothVelocity,
+      keyframe.leftSmooth,
+      keyframe.rightSmooth,
+    );
+
+    inVelocities.push(velocities.inVelocity);
+    outVelocities.push(velocities.outVelocity);
+  }
+
+  return { inVelocities, outVelocities };
 }
 
 function findSegmentIndexFromTime(keyframes: SanitizedPlayer3DKeyframe[], time: number) {
@@ -374,19 +590,36 @@ function preparePlayer3DCurve(lane: TimelineLane): PreparedPlayer3DCurve | null 
   const cached = player3DCurveCache.get(lane);
   if (cached && cached.signature === signature) return cached.curve;
 
+  const positionVelocities = getPositionVelocities(sanitizedKeyframes);
+  const rotationVelocities = getRotationVelocities(sanitizedKeyframes);
   const segments: Player3DSegment[] = [];
   for (let i = 0; i < sanitizedKeyframes.length - 1; i++) {
     const start = sanitizedKeyframes[i]!;
     const end = sanitizedKeyframes[i + 1]!;
     const duration = Math.max(1e-6, end.t - start.t);
-    const rotationDelta = quaternionRelativeLog(start.value.rotation, end.value.rotation);
+    const rotationOutVelocity = rotationVelocities.outVelocities[i]!;
+    const rotationInVelocity = rotationVelocities.inVelocities[i + 1]!;
+    const rotationOutControl = normalizeQuaternion(quaternionMultiply(
+      start.value.rotation,
+      quaternionExp(vec3Scale(rotationOutVelocity, duration / 3)),
+    ));
+    const rotationInControl = normalizeQuaternion(quaternionMultiply(
+      end.value.rotation,
+      quaternionExp(vec3Scale(rotationInVelocity, -duration / 3)),
+    ));
 
     segments.push({
       startTime: start.t,
       endTime: end.t,
       duration,
+      positionStart: start.value.position,
+      positionEnd: end.value.position,
+      positionOutVelocity: positionVelocities.outVelocities[i]!,
+      positionInVelocity: positionVelocities.inVelocities[i + 1]!,
       rotationStart: start.value.rotation,
-      rotationDelta,
+      rotationEnd: end.value.rotation,
+      rotationOutControl,
+      rotationInControl,
     });
   }
 
@@ -404,190 +637,29 @@ function evaluatePlayer3DKeyframes(lane: TimelineLane, time: number) {
   return evaluatePreparedPlayer3DKeyframes(prepared, time);
 }
 
-type Player3DCorner = {
-  tIn: number;
-  tOut: number;
-  positionIn: Vec3;
-  positionOut: Vec3;
-  velocityIn: Vec3;
-  velocityOut: Vec3;
-  rotationIn: Quaternion;
-  rotationOut: Quaternion;
-  rotationVelocityIn: Vec3;
-  rotationVelocityOut: Vec3;
-};
-
-function getPlayer3DCorner(prepared: PreparedPlayer3DCurve, index: number): Player3DCorner {
-  const keyframes = prepared.keyframes;
-  const keyframe = keyframes[index]!;
-  if (index <= 0 || index >= keyframes.length - 1) {
-    return {
-      tIn: keyframe.t,
-      tOut: keyframe.t,
-      positionIn: keyframe.value.position,
-      positionOut: keyframe.value.position,
-      velocityIn: [0, 0, 0],
-      velocityOut: [0, 0, 0],
-      rotationIn: keyframe.value.rotation,
-      rotationOut: keyframe.value.rotation,
-      rotationVelocityIn: [0, 0, 0],
-      rotationVelocityOut: [0, 0, 0],
-    };
-  }
-
-  const previous = keyframes[index - 1]!;
-  const next = keyframes[index + 1]!;
-  const leftSmooth = clamp01(keyframe.leftSmooth ?? 1);
-  const rightSmooth = clamp01(keyframe.rightSmooth ?? 1);
-  const previousDelta = vec3Sub(keyframe.value.position, previous.value.position);
-  const nextDelta = vec3Sub(next.value.position, keyframe.value.position);
-  const previousDistance = vec3Length(previousDelta);
-  const nextDistance = vec3Length(nextDelta);
-  const previousDuration = Math.max(1e-6, keyframe.t - previous.t);
-  const nextDuration = Math.max(1e-6, next.t - keyframe.t);
-  const incomingDirection = vec3NormalizeOr(previousDelta, [0, 0, 0]);
-  const outgoingDirection = vec3NormalizeOr(nextDelta, incomingDirection);
-  const leftDistance = leftSmooth * 0.5 * previousDistance;
-  const rightDistance = rightSmooth * 0.5 * nextDistance;
-  const leftTime = leftSmooth * 0.5 * previousDuration;
-  const rightTime = rightSmooth * 0.5 * nextDuration;
-  const previousRotationDelta = quaternionRelativeLog(previous.value.rotation, keyframe.value.rotation);
-  const nextRotationDelta = quaternionRelativeLog(keyframe.value.rotation, next.value.rotation);
-  const previousRotationSpeed = vec3Scale(previousRotationDelta, 1 / previousDuration);
-  const nextRotationSpeed = vec3Scale(nextRotationDelta, 1 / nextDuration);
-  const rotationInVector = vec3Scale(previousRotationDelta, Math.max(0, 1 - leftTime / previousDuration));
-  const rotationOutVector = vec3Scale(nextRotationDelta, rightTime / nextDuration);
-
-  return {
-    tIn: keyframe.t - leftTime,
-    tOut: keyframe.t + rightTime,
-    positionIn: vec3Sub(keyframe.value.position, vec3Scale(incomingDirection, leftDistance)),
-    positionOut: vec3Add(keyframe.value.position, vec3Scale(outgoingDirection, rightDistance)),
-    velocityIn: vec3Scale(incomingDirection, previousDistance / previousDuration),
-    velocityOut: vec3Scale(outgoingDirection, nextDistance / nextDuration),
-    rotationIn: normalizeQuaternion(quaternionMultiply(previous.value.rotation, quaternionExp(rotationInVector))),
-    rotationOut: normalizeQuaternion(quaternionMultiply(keyframe.value.rotation, quaternionExp(rotationOutVector))),
-    rotationVelocityIn: previousRotationSpeed,
-    rotationVelocityOut: nextRotationSpeed,
-  };
-}
-
-function evaluatePlayer3DRoundedPosition(prepared: PreparedPlayer3DCurve, time: number): Vec3 {
-  const keyframes = prepared.keyframes;
-  if (keyframes.length === 1) return keyframes[0]!.value.position;
-  if (time <= keyframes[0]!.t) return keyframes[0]!.value.position;
-  if (time >= keyframes[keyframes.length - 1]!.t) return keyframes[keyframes.length - 1]!.value.position;
-
-  for (let i = 1; i < keyframes.length - 1; i++) {
-    const corner = getPlayer3DCorner(prepared, i);
-    if (corner.tOut <= corner.tIn) continue;
-    if (time >= corner.tIn && time <= corner.tOut) {
-      const duration = corner.tOut - corner.tIn;
-      const u = clamp01((time - corner.tIn) / duration);
-      return cubicHermiteVec3(
-        corner.positionIn,
-        corner.positionOut,
-        vec3Scale(corner.velocityIn, duration),
-        vec3Scale(corner.velocityOut, duration),
-        u,
-      );
-    }
-  }
-
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const start = i === 0
-      ? {
-        t: keyframes[i]!.t,
-        position: keyframes[i]!.value.position,
-      }
-      : (() => {
-        const corner = getPlayer3DCorner(prepared, i);
-        return { t: corner.tOut, position: corner.positionOut };
-      })();
-    const end = i + 1 === keyframes.length - 1
-      ? {
-        t: keyframes[i + 1]!.t,
-        position: keyframes[i + 1]!.value.position,
-      }
-      : (() => {
-        const corner = getPlayer3DCorner(prepared, i + 1);
-        return { t: corner.tIn, position: corner.positionIn };
-      })();
-
-    if (time >= start.t && time <= end.t) {
-      const duration = end.t - start.t;
-      if (duration <= 1e-8) return end.position;
-      return vec3Lerp(start.position, end.position, clamp01((time - start.t) / duration));
-    }
-  }
-
-  return keyframes[keyframes.length - 1]!.value.position;
-}
-
-function evaluatePlayer3DRoundedRotation(prepared: PreparedPlayer3DCurve, time: number): Quaternion {
-  const keyframes = prepared.keyframes;
-  if (keyframes.length === 1) return keyframes[0]!.value.rotation;
-  if (time <= keyframes[0]!.t) return keyframes[0]!.value.rotation;
-  if (time >= keyframes[keyframes.length - 1]!.t) return keyframes[keyframes.length - 1]!.value.rotation;
-
-  for (let i = 1; i < keyframes.length - 1; i++) {
-    const corner = getPlayer3DCorner(prepared, i);
-    if (corner.tOut <= corner.tIn) continue;
-    if (time >= corner.tIn && time <= corner.tOut) {
-      const duration = corner.tOut - corner.tIn;
-      const u = clamp01((time - corner.tIn) / duration);
-      const delta = quaternionRelativeLog(corner.rotationIn, corner.rotationOut);
-      const transportedOutVelocity = rotateVec3ByQuat(corner.rotationVelocityOut, quaternionExp(delta));
-      const rotationVector = cubicHermiteVec3(
-        [0, 0, 0],
-        delta,
-        vec3Scale(corner.rotationVelocityIn, duration),
-        vec3Scale(transportedOutVelocity, duration),
-        u,
-      );
-      return normalizeQuaternion(quaternionMultiply(corner.rotationIn, quaternionExp(rotationVector)));
-    }
-  }
-
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const start = i === 0
-      ? {
-        t: keyframes[i]!.t,
-        rotation: keyframes[i]!.value.rotation,
-      }
-      : (() => {
-        const corner = getPlayer3DCorner(prepared, i);
-        return { t: corner.tOut, rotation: corner.rotationOut };
-      })();
-    const end = i + 1 === keyframes.length - 1
-      ? {
-        t: keyframes[i + 1]!.t,
-        rotation: keyframes[i + 1]!.value.rotation,
-      }
-      : (() => {
-        const corner = getPlayer3DCorner(prepared, i + 1);
-        return { t: corner.tIn, rotation: corner.rotationIn };
-      })();
-
-    if (time >= start.t && time <= end.t) {
-      const duration = end.t - start.t;
-      if (duration <= 1e-8) return end.rotation;
-      return slerpQuaternion(start.rotation, end.rotation, clamp01((time - start.t) / duration));
-    }
-  }
-
-  return keyframes[keyframes.length - 1]!.value.rotation;
-}
-
 function evaluatePreparedPlayer3DKeyframes(prepared: PreparedPlayer3DCurve, time: number) {
   const { keyframes, segments } = prepared;
   if (keyframes.length === 1 || !segments.length) return keyframes[0]!.value;
   if (time <= keyframes[0]!.t) return keyframes[0]!.value;
   if (time >= keyframes[keyframes.length - 1]!.t) return keyframes[keyframes.length - 1]!.value;
+  const segment = segments[findSegmentIndexFromTime(keyframes, time)]!;
+  const u = clamp01((time - segment.startTime) / segment.duration);
 
   return {
-    position: evaluatePlayer3DRoundedPosition(prepared, time),
-    rotation: evaluatePlayer3DRoundedRotation(prepared, time),
+    position: hermiteVec3(
+      segment.positionStart,
+      segment.positionEnd,
+      vec3Scale(segment.positionOutVelocity, segment.duration),
+      vec3Scale(segment.positionInVelocity, segment.duration),
+      u,
+    ),
+    rotation: sphericalCubicBezier(
+      segment.rotationStart,
+      segment.rotationOutControl,
+      segment.rotationInControl,
+      segment.rotationEnd,
+      u,
+    ),
   };
 }
 

@@ -12,6 +12,7 @@ const props = defineProps<{
   waveform: StoredWaveform | null
   duration: number
   fileName: string | null
+  missingFileName: string | null
 }>()
 
 const emit = defineEmits<{
@@ -19,6 +20,7 @@ const emit = defineEmits<{
   'toggle:snap': []
   'upload': [payload: { file: File; markerTime?: number }]
   'toggle:marker': [time: number]
+  'hover:time': [time: number | null]
   'wheel': [event: WheelEvent]
 }>()
 
@@ -63,6 +65,15 @@ function onWavePointerDown(event: PointerEvent) {
   }
   if (!props.expanded) return
   emit('toggle:marker', time)
+}
+
+function onWavePointerMove(event: PointerEvent) {
+  if (props.width <= 0 || !props.expanded || !props.fileName) {
+    emit('hover:time', null)
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  emit('hover:time', Math.max(0, xToTime(event.clientX - rect.left)))
 }
 
 function onWheel(event: WheelEvent) {
@@ -181,10 +192,11 @@ onBeforeUnmount(() => {
       <input ref="fileInputRef" class="audio-file-input" type="file" accept="audio/*" @change="onFileChange">
     </div>
     <div class="audio-lane" :class="{ expanded }" @click="expanded ? undefined : emit('toggle:expanded')" @wheel.prevent="onWheel">
-      <div class="audio-surface" @pointerdown="onWavePointerDown">
+      <div class="audio-surface" @pointerdown="onWavePointerDown" @pointermove="onWavePointerMove" @pointerleave="emit('hover:time', null)">
         <canvas ref="canvasRef" class="audio-canvas" />
       </div>
       <div v-if="!expanded" class="audio-collapsed-hint" />
+      <div v-else-if="missingFileName" class="audio-empty-hint is-missing">specified track not available, please upload "{{ missingFileName }}"</div>
       <div v-else-if="!hasRenderableWaveform()" class="audio-empty-hint">upload a track to show the waveform</div>
     </div>
   </div>
@@ -292,7 +304,7 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   left: var(--lane-gap, 0.8rem);
-  cursor: crosshair;
+  cursor: text;
 }
 
 .audio-canvas {
@@ -313,5 +325,13 @@ onBeforeUnmount(() => {
   color: rgba(255, 255, 255, 0.6);
   font-size: 0.78rem;
   pointer-events: none;
+}
+
+.audio-empty-hint.is-missing {
+  inset-inline: calc(var(--lane-gap, 0.8rem) + 1rem) 1rem;
+  color: #f88;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.35;
 }
 </style>

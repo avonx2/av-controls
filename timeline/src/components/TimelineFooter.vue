@@ -6,6 +6,7 @@ const props = defineProps<{
   lastStateAt: number
   playing: boolean
   rendering: boolean
+  renderLiveEnabled: boolean
   liveEnabled: boolean
   loopEnabled: boolean
   loopFromSec: number
@@ -19,7 +20,7 @@ const emit = defineEmits<{
   stepFrames: [delta: number]
   togglePlay: []
   toggleRenderLoop: []
-  renderFrame: []
+  toggleRenderLive: []
   toggleLoop: []
   toggleLive: []
   'update:fps': [value: number]
@@ -64,6 +65,12 @@ onBeforeUnmount(() => {
     <button class="footer-btn" @click="emit('jumpKeyframe', -1)">◇</button>
     <button class="footer-btn" @click="emit('stepFrames', -1)">&lsaquo;</button>
     <div class="footer-duration">
+      <button
+        class="footer-btn render-live-btn"
+        :class="{ active: renderLiveEnabled }"
+        @click="emit('toggleRenderLive')"
+        title="Render Live (HQ Preview)"
+      >R</button>
       <button class="footer-btn" @click="emit('togglePlay')">{{ playing ? 'pause:' : 'play:' }}</button>
       <input
         :value="displayedTime.toFixed(2)"
@@ -110,7 +117,6 @@ onBeforeUnmount(() => {
     <div class="footer-render">
       <span>Render:</span>
       <button class="footer-btn" :class="{ active: rendering }" @click="emit('toggleRenderLoop')">range</button>
-      <button class="footer-btn" @click="emit('renderFrame')">frame</button>
     </div>
     <button
       class="footer-btn"
@@ -146,6 +152,12 @@ onBeforeUnmount(() => {
 
 .footer-btn.active {
   background: rgba(80, 180, 120, 0.5);
+}
+
+.render-live-btn.active {
+  background: rgba(212, 175, 55, 0.8) !important;
+  color: #000;
+  font-weight: bold;
 }
 
 .footer-fps {

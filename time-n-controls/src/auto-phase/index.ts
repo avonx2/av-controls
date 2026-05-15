@@ -209,10 +209,11 @@ export class AutoPhase implements PhaseClock {
   private async loadModel() {
     const loadGeneration = ++this.modelLoadGeneration
     try {
-      // Force the lighter single-threaded WASM runtime. The threaded build
-      // can fail on constrained browsers/dev setups with executable-memory
-      // allocation errors and then poison later backend initialization.
-      ort.env.wasm.wasmPaths = './'
+      // Force the lighter single-threaded WASM runtime, but let
+      // onnxruntime-web/Vite resolve the bundled .wasm asset URL. Overriding
+      // wasmPaths to './' makes ORT fetch a root-relative file that often
+      // resolves to the app fallback HTML instead of the wasm binary.
+      ort.env.wasm.wasmPaths = undefined
       ort.env.wasm.numThreads = 1
       ort.env.wasm.proxy = false
 

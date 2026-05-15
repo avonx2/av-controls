@@ -1,7 +1,9 @@
 import { Controls, Transports } from 'av-controls'
 
 const BROKER_URL = 'ws://127.0.0.1:18080'
-const PANEL_ID = new URLSearchParams(window.location.search).get('panelId') ?? 'e2e-artwork'
+const URL_PARAMS = new URLSearchParams(window.location.search)
+const PANEL_ID = URL_PARAMS.get('panelId') ?? 'e2e-artwork'
+const WITH_MODE = URL_PARAMS.get('withMode') === '1'
 
 type ChangeRecord = {
   path: string
@@ -24,6 +26,15 @@ const enabled = new Controls.Switch.Receiver(
   (on) => changes.push({ path: 'main.enabled', value: on }),
 )
 
+const mode = new Controls.Selector.Receiver(
+  new Controls.Selector.Spec(
+    args('Mode', 0, 0, 50, 100, '#cc88ff'),
+    ['A', 'B', 'C'],
+    new Controls.Selector.State(0),
+  ),
+  (index) => changes.push({ path: 'main.mode', value: index }),
+)
+
 const amount = new Controls.Knob.Receiver(
   new Controls.Knob.Spec(args('Amount', 0, 0, 100, 100, '#66cc88'), new Controls.Knob.State(0), 0, 1, 2),
   (value) => changes.push({ path: 'fx.amount', value }),
@@ -31,7 +42,7 @@ const amount = new Controls.Knob.Receiver(
 
 const main = new Controls.Group.Receiver(
   new Controls.Group.SpecWithoutControls(args('Main', 0, 0, 70, 100, '#333333')),
-  { volume, enabled },
+  WITH_MODE ? { volume, enabled, mode } : { volume, enabled },
 )
 
 const fx = new Controls.Group.Receiver(
@@ -49,13 +60,16 @@ root.onUpdate = (update) => {
   emittedUpdates.push(update)
 }
 
-function emitArtworkUpdate(path: 'main.volume' | 'main.enabled' | 'fx.amount', value: number | boolean) {
+function emitArtworkUpdate(path: 'main.volume' | 'main.enabled' | 'main.mode' | 'fx.amount', value: number | boolean) {
   switch (path) {
     case 'main.volume':
       volume.handleSignal(new Controls.Fader.Signal(value as number))
       break
     case 'main.enabled':
       enabled.handleSignal(new Controls.Switch.Signal(value as boolean))
+      break
+    case 'main.mode':
+      mode.handleSignal(new Controls.Selector.Signal(value as number))
       break
     case 'fx.amount':
       amount.handleSignal(new Controls.Knob.Signal(value as number))

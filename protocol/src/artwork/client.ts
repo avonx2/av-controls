@@ -3,12 +3,14 @@ import {
   ArtworkRenderAckMessage,
   ArtworkRuntimeCommandMessage,
   ArtworkRuntimeStatusMessage,
+  type ArtworkMode,
+  type ArtworkModeCommand,
   type Message,
 } from '../messages';
 import type { Sender as TransportSender } from '../transports/base';
 
 export type ArtworkClientStatus = {
-  mode: 'live' | 'playing' | 'paused';
+  mode: ArtworkMode;
   time: number;
 };
 
@@ -40,10 +42,17 @@ export class ArtworkClient {
     });
   }
 
-  setMode(mode: 'live' | 'playing' | 'paused') {
+  setMode(mode: ArtworkModeCommand) {
     this.sender.send(new ArtworkRuntimeCommandMessage({
       type: 'set-artwork-mode',
       mode,
+    }));
+  }
+
+  setTime(time: number) {
+    this.sender.send(new ArtworkRuntimeCommandMessage({
+      type: 'set-artwork-time',
+      time,
     }));
   }
 
@@ -110,7 +119,7 @@ export class ArtworkClient {
     if (message.type === ArtworkRuntimeStatusMessage.type) {
       const status = message as ArtworkRuntimeStatusMessage;
       this.onStatus?.({
-        mode: status.mode,
+        mode: normalizeArtworkMode(status.mode),
         time: status.time,
       });
       return;
@@ -143,4 +152,10 @@ export class ArtworkClient {
     this.onRenderAck = null;
     this.onCaptureAck = null;
   }
+}
+
+function normalizeArtworkMode(mode: ArtworkModeCommand): ArtworkMode {
+  if (mode === 'live') return 'artwork-live';
+  if (mode === 'playing') return 'timeline-live';
+  return mode;
 }

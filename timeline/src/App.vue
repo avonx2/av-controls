@@ -22,13 +22,19 @@ import TimelineFooter from './components/TimelineFooter.vue'
 import TimelineGrid from './components/TimelineGrid.vue'
 import RenderDialog from './components/RenderDialog.vue'
 import RenderProgress from './components/RenderProgress.vue'
+import {
+  createVirtualLayout,
+  findVirtualItemStart,
+  getVirtualRange,
+  getVirtualWindow,
+} from './virtualizer'
 
 type RenderConfig = {
   name: string
   fps: number
   startTime: number
   endTime: number
-  outputFormat: 'webp' | 'png' | 'mp4-avc' | 'mp4-hevc'
+  outputFormat: 'live' | 'webp' | 'png' | 'mp4-avc' | 'mp4-hevc'
   imageWorkerCount: number
   width?: number
   height?: number
@@ -156,6 +162,7 @@ const renderLoopRunning = ref(false)
 const isTestMode = ref(false)
 const activeRenderConfig = ref<RenderConfig | null>(null)
 const renderCancelRequested = ref(false)
+const renderLiveEnabled = ref(false)
 const lastUpdatedControl = ref<string | null>(null)
 const highlightedRowId = ref<string | null>(null)
 const autoFollowRecent = ref(true)
@@ -178,6 +185,8 @@ const audioTrack = ref<StoredAudioTrack | null>(null)
 const audioWaveform = shallowRef<StoredWaveform | null>(null)
 const audioDuration = ref(0)
 const audioObjectUrl = ref<string | null>(null)
+const missingAudioFileName = ref<string | null>(null)
+const highlightedAudioMarkerTime = ref<number | null>(null)
 const audioElement = typeof Audio !== 'undefined' ? new Audio() : null
 if (audioElement) {
   audioElement.preload = 'auto'
@@ -188,8 +197,8 @@ const timelineScrollRef = ref<HTMLElement | null>(null)
 const timelineCursorRef = ref<HTMLElement | null>(null)
 let isTogglingPlay = false
 let requestStateTimer: number | null = null
+let playbackAutomationTimer: number | null = null
 let uiSaveTimer: number | null = null
-let lastPlaybackAutomationAt = 0
 let lastAudioPlaybackSyncAt = 0
 const UI_STATE_STORAGE_PREFIX = 'avonx-timeline-ui::'
 const PROJECT_SELECTION_STORAGE_PREFIX = 'avonx-timeline-project::'
@@ -312,6 +321,7 @@ async function applyAudioTrack(nextTrack?: StoredAudioTrack | null) {
   audioTrack.value = nextTrack ? cloneValue(nextTrack) : null
   audioWaveform.value = null
   audioDuration.value = 0
+  missingAudioFileName.value = null
   clearAudioObjectUrl()
 
   if (!audioElement) return
@@ -325,7 +335,11 @@ async function applyAudioTrack(nextTrack?: StoredAudioTrack | null) {
     loadAudioAsset(audioTrack.value.assetHash),
     loadWaveform(audioTrack.value.assetHash),
   ])
-  if (!audioTrack.value || asset?.hash !== audioTrack.value.assetHash) return
+  if (!audioTrack.value) return
+  if (asset?.hash !== audioTrack.value.assetHash) {
+    missingAudioFileName.value = audioTrack.value.fileName || 'audio file'
+    return
+  }
 
   let resolvedWaveform: StoredWaveform | null = isValidStoredWaveform(waveform) ? waveform : null
 
@@ -372,9 +386,14 @@ function scheduleProjectSave() {
   })
 }
 
+function getAudioMarkerHitThresholdSeconds() {
+  const thresholdSeconds = (secondsPerWidth.value / Math.max(1, laneWidthPx.value || 1)) * 10
+  return thresholdSeconds
+}
+
 function toggleAudioMarker(time: number) {
   if (!audioTrack.value) return
-  const thresholdSeconds = (secondsPerWidth.value / Math.max(1, laneWidthPx.value || 1)) * 10
+  const thresholdSeconds = getAudioMarkerHitThresholdSeconds()
   const existingIndex = audioTrack.value.markers.findIndex(marker => Math.abs(marker - time) <= thresholdSeconds)
   if (existingIndex >= 0) {
     audioTrack.value.markers.splice(existingIndex, 1)
@@ -383,6 +402,15 @@ function toggleAudioMarker(time: number) {
     audioTrack.value.markers.sort((a, b) => a - b)
   }
   scheduleProjectSave()
+}
+
+function onAudioHoverTime(time: number | null) {
+  if (time === null || !audioTrack.value) {
+    highlightedAudioMarkerTime.value = null
+    return
+  }
+  const thresholdSeconds = getAudioMarkerHitThresholdSeconds()
+  highlightedAudioMarkerTime.value = audioTrack.value.markers.find(marker => Math.abs(marker - time) <= thresholdSeconds) ?? null
 }
 
 function toggleAudioExpanded() {
@@ -583,13 +611,20 @@ function loadStoredUiState() {
   }
 }
 
-function scheduleUiAutosave() {
-  persistUiStateLocally(buildUiState())
+function scheduleUiAutosave(options?: { delayMs?: number; deferLocalStorage?: boolean }) {
+  const delayMs = options?.delayMs ?? 150
+  const shouldDeferLocalStorage = options?.deferLocalStorage ?? false
+  if (!shouldDeferLocalStorage) {
+    persistUiStateLocally(buildUiState())
+  }
   if (uiSaveTimer !== null) {
     window.clearTimeout(uiSaveTimer)
   }
   uiSaveTimer = window.setTimeout(async () => {
     uiSaveTimer = null
+    if (shouldDeferLocalStorage) {
+      persistUiStateLocally(buildUiState())
+    }
     if (!artworkId.value || !timelineStateRaw.value) return
     await saveProject({
       key: `${artworkId.value}::autosave`,
@@ -600,7 +635,7 @@ function scheduleUiAutosave() {
       uiState: buildUiState(),
       audioTrack: buildStoredAudioTrack(),
     })
-  }, 150)
+  }, delayMs)
 }
 
 const artworkId = computed(() => {
@@ -747,9 +782,16 @@ async function proceedProjectCompatibilityAction() {
 async function applyCompatibleProjectState(
   title: string,
   state: Timeline.TimelineState,
+  audioTrackToLoad: StoredAudioTrack | undefined,
   proceed: (compatibleState: Timeline.TimelineState) => Promise<void>,
 ) {
   const compatible = filterProjectStateForCurrentSpec(state)
+  if (audioTrackToLoad?.assetHash && !(await loadAudioAsset(audioTrackToLoad.assetHash))) {
+    compatible.issues.push({
+      path: 'audio',
+      reason: `specified track not available: ${audioTrackToLoad.fileName || audioTrackToLoad.assetHash}`,
+    })
+  }
   if (!compatible.issues.length) {
     await proceed(compatible.state)
     return
@@ -814,6 +856,7 @@ function onTogglePlayButton() {
 
 onMounted(() => {
   connect()
+  startPlaybackAutomationTimer()
   tickRaf()
   window.addEventListener('keydown', onKeyDown)
   laneResizeObserver = new ResizeObserver(() => {
@@ -838,6 +881,38 @@ function applyPanelChoice() {
 }
 
 function togglePlay() {
+  if (renderLiveEnabled.value) {
+    if (rendering.value) {
+      onCancelRender()
+    } else {
+      const startTime = displayTime.value
+      let endTime = startTime + 60
+      if (timelineState.value) {
+        timelineState.value.controls.forEach(c => {
+          c.lanes.forEach(l => {
+            if (l.type === 'keyframes') {
+              l.keyframes.forEach(k => { if (k.time > endTime) endTime = k.time })
+            } else if (l.type === 'trigger') {
+              l.triggers.forEach(t => { if (t.time > endTime) endTime = t.time })
+            } else if (l.points) {
+              l.points.forEach(p => { if (p.time > endTime) endTime = p.time })
+            }
+          })
+        })
+      }
+      void runRenderLoop({
+        name: 'Live Preview',
+        fps: fps.value,
+        startTime,
+        endTime: endTime + 1,
+        outputFormat: 'live',
+        imageWorkerCount: 1,
+        quality: 0.9,
+      })
+    }
+    return
+  }
+
   // Capture current display time BEFORE changing playing state
   // (displayTime computation depends on playing.value)
   const currentTime = displayTime.value
@@ -864,7 +939,7 @@ function togglePlay() {
   }
   pendingPlaybackIntent.value = null
   timelineClient.value?.setPlaying(next)
-  artworkClient.value?.setMode(next ? 'playing' : (liveEnabled.value ? 'live' : 'paused'))
+  artworkClient.value?.setMode(next ? 'timeline-live' : (liveEnabled.value ? 'artwork-live' : 'paused'))
 }
 
 function toggleRenderLoop() {
@@ -941,7 +1016,7 @@ function previewFrameAtTime(time: number) {
   if (!liveEnabled.value) {
     artworkClient.value?.setMode('paused')
   }
-  artworkClient.value?.render(nextTime)
+  artworkClient.value?.setTime(nextTime)
 }
 
 async function runRenderLoop(config: RenderConfig, startFrame = 0) {
@@ -955,7 +1030,7 @@ async function runRenderLoop(config: RenderConfig, startFrame = 0) {
   activeRenderConfig.value = config
   renderCancelRequested.value = false
   renderLoopRunning.value = true
-  showRenderProgress.value = true
+  showRenderProgress.value = config.outputFormat !== 'live'
   renderProgress.value = {
     frameNumber: startFrame,
     totalFrames,
@@ -963,7 +1038,7 @@ async function runRenderLoop(config: RenderConfig, startFrame = 0) {
   }
 
   try {
-    artworkClient.value.setMode('paused')
+    artworkClient.value.setMode('timeline-render')
     if (startFrame === 0) {
       artworkClient.value.resetRenderState()
     }
@@ -1133,6 +1208,13 @@ function onRenderTest(config: RenderConfig) {
   void runRenderLoop(config)
 }
 
+function toggleRenderLive() {
+  renderLiveEnabled.value = !renderLiveEnabled.value
+  if (!renderLiveEnabled.value && rendering.value) {
+    onCancelRender()
+  }
+}
+
 function onContinueRender() {
   const config = activeRenderConfig.value
   if (!config) return
@@ -1153,17 +1235,13 @@ function onCancelRender() {
   showRenderProgress.value = false
 }
 
-function renderFrame() {
-  previewFrameAtTime(displayTime.value)
-}
-
 function toggleLive() {
   const next = !liveEnabled.value
   liveEnabled.value = next
   if (!playing.value) {
     applyAutomationAt(displayTime.value, { useRenderLanes: !next, bypassBackpressure: true })
-    artworkClient.value?.setMode(next ? 'live' : 'paused')
-    artworkClient.value?.render(displayTime.value)
+    artworkClient.value?.setMode(next ? 'artwork-live' : 'paused')
+    artworkClient.value?.setTime(displayTime.value)
   }
   scheduleUiAutosave()
 }
@@ -1316,13 +1394,13 @@ const currentProjectLabel = computed(() => {
 watch(artworkMode, (mode) => {
   if (rendering.value) return
   if (!playing.value && !hasPersistedLivePreference.value) {
-    liveEnabled.value = mode !== 'paused'
+    liveEnabled.value = mode === 'artwork-live'
   }
 })
 
 watch([artworkMode, liveEnabled, playing, artworkClient, hasPersistedLivePreference], ([mode, live, isPlaying, client, hasPreference]) => {
   if (!client || isPlaying || !hasPreference || rendering.value) return
-  const targetMode = live ? 'live' : 'paused'
+  const targetMode = live ? 'artwork-live' : 'paused'
   if (mode === targetMode) return
   client.setMode(targetMode)
 })
@@ -1476,28 +1554,33 @@ function getExpandedDisplayRowHeight(rowId: string, hasValue: boolean) {
   return Math.max(baseHeight, hasRenderOverride ? expandedRowHeight * 2 : expandedRowHeight)
 }
 
+const visibleRowVirtualLayout = computed(() =>
+  createVirtualLayout(
+    visibleRowsWithEllipsis.value,
+    (entry) => getVisibleEntryRowHeight(entry),
+    rowGapPx,
+  ),
+)
+
 const viewportVisibleRowIds = computed(() => {
   const viewportTop = Math.max(0, timelineScrollTop.value - verticalViewportBufferPx)
   const viewportBottom = timelineScrollTop.value + timelineViewportHeight.value + verticalViewportBufferPx
-
-  let y = 0
+  const layout = visibleRowVirtualLayout.value
+  const range = getVirtualRange(layout, viewportTop, viewportBottom)
   const ids = new Set<string>()
-
-  for (const entry of visibleRowsWithEllipsis.value) {
-    const rowTop = y
-    const rowBottom = rowTop + getVisibleEntryRowHeight(entry)
-    if (entry.kind === 'row' && rowBottom >= viewportTop && rowTop <= viewportBottom) {
+  if (!range) return ids
+  for (let index = range.firstIndex; index <= range.lastIndex; index += 1) {
+    const entry = layout.items[index]
+    if (entry?.kind === 'row') {
       ids.add(entry.row.id)
     }
-    y = rowBottom + rowGapPx
   }
-
   return ids
 })
 
 const virtualizedVisibleRows = computed(() => {
-  const entries = visibleRowsWithEllipsis.value
-  if (!entries.length) {
+  const layout = visibleRowVirtualLayout.value
+  if (!layout.items.length) {
     return {
       entries: [] as VisibleRow[],
       topSpacerHeight: 0,
@@ -1507,7 +1590,7 @@ const virtualizedVisibleRows = computed(() => {
 
   if (!timelineViewportHeight.value) {
     return {
-      entries,
+      entries: [...layout.items],
       topSpacerHeight: 0,
       bottomSpacerHeight: 0,
     }
@@ -1515,47 +1598,7 @@ const virtualizedVisibleRows = computed(() => {
 
   const viewportTop = Math.max(0, timelineScrollTop.value - verticalViewportBufferPx)
   const viewportBottom = timelineScrollTop.value + timelineViewportHeight.value + verticalViewportBufferPx
-
-  let y = 0
-  let firstVisibleIndex = -1
-  let lastVisibleIndex = -1
-  let topSpacerHeight = 0
-  let bottomSpacerHeight = 0
-
-  for (let i = 0; i < entries.length; i += 1) {
-    const entry = entries[i]!
-    const rowHeight = getVisibleEntryRowHeight(entry)
-    const rowTop = y
-    const rowBottom = rowTop + rowHeight
-    const intersects = rowBottom >= viewportTop && rowTop <= viewportBottom
-
-    if (intersects) {
-      if (firstVisibleIndex === -1) firstVisibleIndex = i
-      lastVisibleIndex = i
-    } else if (firstVisibleIndex === -1) {
-      topSpacerHeight = rowBottom + rowGapPx
-    }
-
-    y = rowBottom + rowGapPx
-  }
-
-  if (firstVisibleIndex === -1 || lastVisibleIndex === -1) {
-    return {
-      entries: entries.slice(0, 1),
-      topSpacerHeight: 0,
-      bottomSpacerHeight: Math.max(0, y - getVisibleEntryRowHeight(entries[0]!) - rowGapPx),
-    }
-  }
-
-  for (let i = lastVisibleIndex + 1; i < entries.length; i += 1) {
-    bottomSpacerHeight += getVisibleEntryRowHeight(entries[i]!) + rowGapPx
-  }
-
-  return {
-    entries: entries.slice(firstVisibleIndex, lastVisibleIndex + 1),
-    topSpacerHeight: Math.max(0, topSpacerHeight),
-    bottomSpacerHeight: Math.max(0, bottomSpacerHeight),
-  }
+  return getVirtualWindow(layout, viewportTop, viewportBottom)
 })
 
 function shouldRenderRowLanes(rowId: string) {
@@ -1671,15 +1714,10 @@ function focusRow(rowId: string) {
 }
 
 function getRowScrollTop(rowId: string) {
-  let y = 0
-  for (const entry of visibleRowsWithEllipsis.value) {
-    const rowHeight = getVisibleEntryRowHeight(entry)
-    if (entry.kind === 'row' && entry.row.id === rowId) {
-      return y
-    }
-    y += rowHeight + rowGapPx
-  }
-  return null
+  return findVirtualItemStart(
+    visibleRowVirtualLayout.value,
+    (entry) => entry.kind === 'row' && entry.row.id === rowId,
+  )
 }
 
 function scrollRowIntoView(rowId: string) {
@@ -1718,7 +1756,7 @@ function updateTimelineViewportMetrics() {
 
 function onTimelineScroll() {
   updateTimelineViewportMetrics()
-  scheduleUiAutosave()
+  scheduleUiAutosave({ delayMs: 300, deferLocalStorage: true })
 }
 
 function resolveRowId(rowId: string) {
@@ -2107,6 +2145,7 @@ onBeforeUnmount(() => {
   }
   stopResize()
   stopRowResize()
+  stopPlaybackAutomationTimer()
   if (rafId) cancelAnimationFrame(rafId)
   laneResizeObserver?.disconnect()
   stopStatePolling()
@@ -2140,17 +2179,33 @@ function stopStatePolling() {
   }
 }
 
+function startPlaybackAutomationTimer() {
+  stopPlaybackAutomationTimer()
+  const intervalMs = 1000 / Math.max(1, fps.value)
+  playbackAutomationTimer = window.setInterval(() => {
+    rafNow.value = performance.now()
+    if (playing.value && timelineClient.value) {
+      const time = displayTime.value
+      timelineClient.value.applyAutomation(time)
+      artworkClient.value?.setTime(time)
+    }
+  }, intervalMs)
+}
+
+function stopPlaybackAutomationTimer() {
+  if (playbackAutomationTimer !== null) {
+    window.clearInterval(playbackAutomationTimer)
+    playbackAutomationTimer = null
+  }
+}
+
+watch(fps, () => {
+  startPlaybackAutomationTimer()
+})
+
 function tickRaf() {
   rafNow.value = performance.now()
   updatePlaybackUi(false)
-  if (playing.value && timelineClient.value) {
-    const nowSeconds = rafNow.value / 1000
-    const minInterval = 1 / Math.max(1, fps.value)
-    if (nowSeconds - lastPlaybackAutomationAt >= minInterval) {
-      lastPlaybackAutomationAt = nowSeconds
-      timelineClient.value.applyAutomation(displayTime.value)
-    }
-  }
   rafId = requestAnimationFrame(tickRaf)
 }
 
@@ -2247,9 +2302,9 @@ const loopRangeStyle = computed(() => {
 })
 
 const visibleAudioMarkerXs = computed(() => {
-  if (!laneWidthPx.value) return [] as Array<{ time: number; x: number }>
+  if (!laneWidthPx.value) return [] as Array<{ time: number; x: number; highlighted: boolean }>
   return audioMarkers.value
-    .map(time => ({ time, x: timeToX(time) }))
+    .map(time => ({ time, x: timeToX(time), highlighted: highlightedAudioMarkerTime.value === time }))
     .filter(marker => marker.x >= 0 && marker.x <= laneWidthPx.value)
 })
 
@@ -2434,7 +2489,7 @@ function expandParentRow(parentId: string | null) {
 // Scrubbing state
 const scrubAreaRef = ref<HTMLElement | null>(null)
 let isScrubbing = false
-let scrubRestoreState: 'live' | 'playing' | 'paused' = 'paused'
+let scrubRestoreState: Artwork.ArtworkClientStatus['mode'] = 'paused'
 let scrubWasPlaying = false
 
 function seekToX(clientX: number) {
@@ -2459,7 +2514,7 @@ function seekToX(clientX: number) {
   lastStateTime.value = time
   lastStateAt.value = performance.now()
   applyAutomationAt(time, { bypassBackpressure: true })
-  artworkClient.value?.render(time)
+  artworkClient.value?.setTime(time)
 }
 
 function onScrubPointerDown(e: PointerEvent) {
@@ -3471,6 +3526,7 @@ async function loadSelectedProject() {
   await applyCompatibleProjectState(
     `Load "${project.name}"`,
     project.state,
+    project.audioTrack,
     async (compatibleState) => {
       projectName.value = project.name
       await applyProjectState(compatibleState)
@@ -3518,15 +3574,15 @@ function applyUiState(uiState?: StoredProject['uiState']) {
     timelineClient.value?.seek(nextTime)
     timelineClient.value?.applyAutomation(nextTime, { bypassBackpressure: true })
     timelineClient.value?.setPlaying(false)
-    artworkClient.value?.setMode(restoredLiveEnabled ? 'live' : 'paused')
-    artworkClient.value?.render(nextTime)
+    artworkClient.value?.setMode(restoredLiveEnabled ? 'artwork-live' : 'paused')
+    artworkClient.value?.setTime(nextTime)
   }
   if (typeof uiState.loopFromSec === 'number') loopFromSec.value = Math.max(0, uiState.loopFromSec)
   if (typeof uiState.liveEnabled === 'boolean') {
     hasPersistedLivePreference.value = true
     liveEnabled.value = uiState.liveEnabled
     if (!playing.value) {
-      artworkClient.value?.setMode(uiState.liveEnabled ? 'live' : 'paused')
+      artworkClient.value?.setMode(uiState.liveEnabled ? 'artwork-live' : 'paused')
     }
   }
   if (uiState.expandedRows) {
@@ -3579,6 +3635,7 @@ async function handleImportProject(file: File) {
   await applyCompatibleProjectState(
     `Import "${project.name}"`,
     project.state,
+    project.audioTrack,
     async (compatibleState) => {
       await saveProject({
         ...project,
@@ -3723,6 +3780,7 @@ watch(artworkClient, (client) => {
         :audio-waveform="audioWaveform"
         :audio-duration="audioDuration"
         :audio-file-name="audioFileName"
+        :missing-audio-file-name="missingAudioFileName"
         :should-render-row-lanes="shouldRenderRowLanes"
         :lane-has-data="laneHasData"
         :get-lane-action-id="getLaneActionId"
@@ -3753,6 +3811,7 @@ watch(artworkClient, (client) => {
         :toggle-audio-expanded="toggleAudioExpanded"
         :toggle-audio-snap="toggleAudioSnap"
         :on-audio-upload="onAudioUpload"
+        :on-audio-hover-time="onAudioHoverTime"
         :toggle-audio-marker="toggleAudioMarker"
       />
       <TimelineFooter
@@ -3760,6 +3819,7 @@ watch(artworkClient, (client) => {
         :last-state-at="lastStateAt"
         :playing="playing"
         :rendering="rendering"
+        :render-live-enabled="renderLiveEnabled"
         :live-enabled="liveEnabled"
         :loop-enabled="loopEnabled"
         :loop-from-sec="loopFromSec"
@@ -3770,7 +3830,7 @@ watch(artworkClient, (client) => {
         @step-frames="stepFrames"
         @toggle-play="onTogglePlayButton"
         @toggle-render-loop="toggleRenderLoop"
-        @render-frame="renderFrame"
+        @toggle-render-live="toggleRenderLive"
         @toggle-loop="toggleLoop"
         @toggle-live="toggleLive"
         @update:fps="fps = $event"

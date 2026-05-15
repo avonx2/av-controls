@@ -56,6 +56,20 @@ function lowerBoundTimeIndex<T>(items: T[], time: number, getTime: (item: T) => 
   return low;
 }
 
+function upperBoundTimeIndex<T>(items: T[], time: number, getTime: (item: T) => number) {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (getTime(items[mid]!) <= time) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
 function findStepWindow(points: TimelinePoint[], time: number, lastLeftIndex: number, binarySearch = false) {
   if (points.length === 0) return null;
   if (!binarySearch) {
@@ -79,7 +93,7 @@ function findStepWindow(points: TimelinePoint[], time: number, lastLeftIndex: nu
     }
   }
 
-  const rightIndex = lowerBoundTimeIndex(points, time, point => point.t);
+  const rightIndex = upperBoundTimeIndex(points, time, point => point.t);
   if (rightIndex <= 0) return { leftIndex: 0, rightIndex: Math.min(1, points.length - 1) };
   if (rightIndex >= points.length) {
     return { leftIndex: points.length - 1, rightIndex: points.length - 1 };
