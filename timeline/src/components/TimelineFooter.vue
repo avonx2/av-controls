@@ -32,7 +32,7 @@ const displayedTime = ref(0)
 let displayTimer: number | null = null
 
 function syncDisplayedTime() {
-  displayedTime.value = props.playing
+  displayedTime.value = (props.playing && !props.rendering)
     ? Math.max(0, props.lastStateTime + (performance.now() - props.lastStateAt) / 1000)
     : props.lastStateTime
 }

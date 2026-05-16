@@ -159,6 +159,7 @@ const showRenderDialog = ref(false)
 const showRenderProgress = ref(false)
 const renderProgress = ref({ frameNumber: 0, totalFrames: 0, currentTime: 0 })
 const renderLoopRunning = ref(false)
+const rendering = computed(() => renderLoopRunning.value || showRenderProgress.value)
 const isTestMode = ref(false)
 const activeRenderConfig = ref<RenderConfig | null>(null)
 const renderCancelRequested = ref(false)
@@ -884,36 +885,16 @@ function togglePlay() {
   if (renderLiveEnabled.value) {
     if (rendering.value) {
       onCancelRender()
+      playing.value = false
+      timelineClient.value?.setPlaying(false)
     } else {
-      const startTime = displayTime.value
-      let endTime = startTime + 60
-      if (timelineState.value) {
-        timelineState.value.controls.forEach(c => {
-          c.lanes.forEach(l => {
-            if (l.type === 'keyframes') {
-              l.keyframes.forEach(k => { if (k.time > endTime) endTime = k.time })
-            } else if (l.type === 'trigger') {
-              l.triggers.forEach(t => { if (t.time > endTime) endTime = t.time })
-            } else if (l.points) {
-              l.points.forEach(p => { if (p.time > endTime) endTime = p.time })
-            }
-          })
-        })
-      }
-      void runRenderLoop({
-        name: 'Live Preview',
-        fps: fps.value,
-        startTime,
-        endTime: endTime + 1,
-        outputFormat: 'live',
-        imageWorkerCount: 1,
-        quality: 0.9,
-      })
+      startRenderLivePlayback(displayTime.value)
     }
     return
   }
 
   // Capture current display time BEFORE changing playing state
+  // ... rest of togglePlay
   // (displayTime computation depends on playing.value)
   const currentTime = displayTime.value
   const next = !playing.value
@@ -1021,6 +1002,10 @@ function previewFrameAtTime(time: number) {
 
 async function runRenderLoop(config: RenderConfig, startFrame = 0) {
   if (!timelineClient.value || !artworkClient.value) return
+  if (renderLoopRunning.value) {
+    console.warn('[timeline] Render loop is already running. Ignoring overlapping request.')
+    return
+  }
 
   const totalFrames = getRenderTotalFrames(config)
   const maxFrames = config.testMode && config.frameLimit
@@ -1039,7 +1024,13 @@ async function runRenderLoop(config: RenderConfig, startFrame = 0) {
 
   try {
     artworkClient.value.setMode('timeline-render')
-    if (startFrame === 0) {
+    // Immediately pause audio when rendering starts
+    if (audioElement && !audioElement.paused) {
+      audioElement.pause()
+    }
+    
+    // Only reset state for actual export renders, not live preview
+    if (startFrame === 0 && config.outputFormat !== 'live') {
       artworkClient.value.resetRenderState()
     }
     if (isImageRenderConfig(config) && startFrame === 0) {
@@ -1106,11 +1097,21 @@ async function runRenderLoop(config: RenderConfig, startFrame = 0) {
         throw new Error(ack.error || `Render failed at ${time.toFixed(3)}s`)
       }
 
-      renderProgress.value = {
-        frameNumber: frameIndex + 1,
-        totalFrames,
-        currentTime: time,
+      // Only update reactive progress state if actually showing the modal
+      if (showRenderProgress.value) {
+        renderProgress.value = {
+          frameNumber: frameIndex + 1,
+          totalFrames,
+          currentTime: time,
+        }
+      } else {
+        // Just update local timeline state
+        timelineTime.value = time
+        lastStateTime.value = time
       }
+
+      // Yield to the event loop to allow UI updates and prevent starvation
+      await new Promise(r => setTimeout(r, 0))
     }
 
     if (renderCancelRequested.value) {
@@ -1208,10 +1209,56 @@ function onRenderTest(config: RenderConfig) {
   void runRenderLoop(config)
 }
 
+function startRenderLivePlayback(startTime: number) {
+  let endTime = startTime + 3600 // Default to 1 hour for live preview
+  if (timelineState.value) {
+    timelineState.value.controls.forEach(c => {
+      c.lanes.forEach(l => {
+        if (l.type === 'keyframes') {
+          l.keyframes.forEach(k => { if (k.time > endTime) endTime = k.time })
+        } else if (l.type === 'trigger') {
+          l.triggers.forEach(t => { if (t.time > endTime) endTime = t.time })
+        } else if (l.points) {
+          l.points.forEach(p => { if (p.time > endTime) endTime = p.time })
+        }
+      })
+    })
+  }
+  playing.value = true
+  timelineClient.value?.setPlaying(true)
+  void runRenderLoop({
+    name: 'Live Preview',
+    fps: fps.value,
+    startTime,
+    endTime: endTime + 1,
+    outputFormat: 'live',
+    imageWorkerCount: 1,
+    quality: 0.9,
+  })
+}
+
 function toggleRenderLive() {
   renderLiveEnabled.value = !renderLiveEnabled.value
-  if (!renderLiveEnabled.value && rendering.value) {
-    onCancelRender()
+  if (renderLiveEnabled.value) {
+    artworkClient.value?.setMode('timeline-render')
+    if (playing.value && !rendering.value) {
+      // Transition from real-time to render-live seamlessly
+      startRenderLivePlayback(displayTime.value)
+    }
+  } else {
+    if (rendering.value) {
+      onCancelRender()
+      // If we were rendering (active playback in R mode), 
+      // we need to resume normal playback if playing.value is still true
+      if (playing.value) {
+        lastStateTime.value = displayTime.value
+        lastStateAt.value = performance.now()
+        timelineClient.value?.setPlaying(true)
+        artworkClient.value?.setMode('timeline-live')
+      }
+    } else {
+      artworkClient.value?.setMode(playing.value ? 'timeline-live' : (liveEnabled.value ? 'artwork-live' : 'paused'))
+    }
   }
 }
 
@@ -2167,7 +2214,7 @@ onBeforeUnmount(() => {
 function startStatePolling() {
   stopStatePolling()
   requestStateTimer = window.setInterval(() => {
-    if (!timelineClient.value || !rootSpec.value) return
+    if (!timelineClient.value || !rootSpec.value || rendering.value) return
     timelineClient.value.requestState()
   }, 2000)
 }
@@ -2184,7 +2231,7 @@ function startPlaybackAutomationTimer() {
   const intervalMs = 1000 / Math.max(1, fps.value)
   playbackAutomationTimer = window.setInterval(() => {
     rafNow.value = performance.now()
-    if (playing.value && timelineClient.value) {
+    if (playing.value && timelineClient.value && !rendering.value) {
       const time = displayTime.value
       timelineClient.value.applyAutomation(time)
       artworkClient.value?.setTime(time)
@@ -2204,8 +2251,10 @@ watch(fps, () => {
 })
 
 function tickRaf() {
-  rafNow.value = performance.now()
-  updatePlaybackUi(false)
+  if (!rendering.value) {
+    rafNow.value = performance.now()
+    updatePlaybackUi(false)
+  }
   rafId = requestAnimationFrame(tickRaf)
 }
 
@@ -2255,7 +2304,7 @@ function restoreScrollTopDeferred(scrollTop: number) {
 }
 
 const displayTime = computed(() => {
-  if (!playing.value) return lastStateTime.value
+  if (!playing.value || rendering.value) return lastStateTime.value
   const delta = (rafNow.value - lastStateAt.value) / 1000
   return Math.max(0, lastStateTime.value + delta)
 })
@@ -2277,7 +2326,7 @@ const audioMarkers = computed(() => audioTrack.value?.markers ?? [])
 const audioExpanded = computed(() => audioTrack.value?.expanded ?? true)
 const audioFileName = computed(() => audioTrack.value?.fileName || null)
 
-watch([displayTime, playing, audioObjectUrl], () => {
+watch([displayTime, playing, rendering, audioObjectUrl], () => {
   syncTimelineAudio()
 })
 
@@ -2285,7 +2334,6 @@ watch([lastStateTime, playing, laneWidthPx, timeOffset, secondsPerWidth], () => 
   updatePlaybackUi(true)
 }, { immediate: true })
 
-const rendering = computed(() => renderLoopRunning.value || showRenderProgress.value)
 const loopRangeStyle = computed(() => {
   if (!loopEnabled.value || !laneWidthPx.value) return null
   const start = Math.max(0, loopFromSec.value)
@@ -2491,6 +2539,9 @@ const scrubAreaRef = ref<HTMLElement | null>(null)
 let isScrubbing = false
 let scrubRestoreState: Artwork.ArtworkClientStatus['mode'] = 'paused'
 let scrubWasPlaying = false
+let lastScrubRenderAt = 0
+let scrubRenderInProgress = false
+let nextScrubRenderTime: number | null = null
 
 function seekToX(clientX: number) {
   const lanePlane = getLanePlaneMetrics()
@@ -2513,8 +2564,42 @@ function seekToX(clientX: number) {
   timelineTime.value = time
   lastStateTime.value = time
   lastStateAt.value = performance.now()
-  applyAutomationAt(time, { bypassBackpressure: true })
-  artworkClient.value?.setTime(time)
+  applyAutomationAt(time, { useRenderLanes: renderLiveEnabled.value, bypassBackpressure: true })
+  
+  if (renderLiveEnabled.value && artworkClient.value) {
+    if (renderLoopRunning.value) {
+      return
+    }
+    
+    if (scrubRenderInProgress) {
+      nextScrubRenderTime = time
+      return
+    }
+
+    const dispatchRender = async (renderTime: number) => {
+      if (!artworkClient.value) return
+      scrubRenderInProgress = true
+      lastScrubRenderAt = performance.now()
+      
+      try {
+        artworkClient.value.render(renderTime)
+        await waitForRenderAck(renderTime)
+      } catch (e) {
+        console.warn('[timeline:scrub] render failed', e)
+      } finally {
+        scrubRenderInProgress = false
+        if (nextScrubRenderTime !== null) {
+          const nextTime = nextScrubRenderTime
+          nextScrubRenderTime = null
+          void dispatchRender(nextTime)
+        }
+      }
+    }
+
+    void dispatchRender(time)
+  } else {
+    artworkClient.value?.setTime(time)
+  }
 }
 
 function onScrubPointerDown(e: PointerEvent) {
@@ -3790,7 +3875,7 @@ watch(artworkClient, (client) => {
         :get-branch-manual-override-row-ids="getBranchManualOverrideRowIds"
         :activate-control="activateControl"
         :get-branch-keyframe-row-ids="getBranchKeyframeRowIds"
-        :record-manual-override-keyframe="recordManualOverrideKeyframe"
+        :record-manual-override-keyframe="recordAndSyncManualOverrideKeyframe"
         :record-branch-manual-override-keyframes="recordBranchManualOverrideKeyframes"
         :has-active-keyframe-target="hasActiveKeyframeTarget"
         :control-manual-override="controlManualOverride"

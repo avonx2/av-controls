@@ -120,11 +120,7 @@ const leafKeyframeActive = computed(() => props.hasActiveKeyframeTarget(props.ro
             @click.stop="activateControl(row.id)"
           >Act</button>
           <button
-            class="label-action action-keyframe"
-            :class="{
-              active: leafKeyframeActive,
-              disabled: !leafKeyframeActive,
-            }"
+            class="label-action action-keyframe active"
             @click.stop="recordManualOverrideKeyframe(row.id)"
           >Key</button>
         </template>

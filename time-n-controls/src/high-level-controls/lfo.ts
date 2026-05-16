@@ -52,7 +52,7 @@ export class LFOControl {
     )
     this.modeSelector = new Controls.Selector.Receiver(
       new Controls.Selector.Spec(
-        new Controls.Base.Args(name + ' mode', 20, 40, 20, 30, '#f84'),
+        new Controls.Base.Args('mode', 20, 40, 20, 30, '#f84'),
         ['above', 'around', 'below'], new Controls.Selector.State(1) // 'around' is index 1
       )
     )
@@ -65,7 +65,7 @@ export class LFOControl {
     )
     this.rateModeSelector = new Controls.Selector.Receiver(
       new Controls.Selector.Spec(
-        new Controls.Base.Args(name + ' rate', 40, 40, 20, 30, '#48f'),
+        new Controls.Base.Args('rate', 40, 40, 20, 30, '#48f'),
         ['phase', 'time'], new Controls.Selector.State(0) // 'phase' is index 0
       )
     )
@@ -86,7 +86,7 @@ export class LFOControl {
 
     this.waveformSelector = new Controls.Selector.Receiver(
       new Controls.Selector.Spec(
-        new Controls.Base.Args(name + ' wave', 0, 0, 20, 70, '#999'),
+        new Controls.Base.Args('wave', 0, 0, 20, 70, '#999'),
         ['swell saw', 'decay saw', 'sine', 'square'],
         new Controls.Selector.State(2)
       )
@@ -94,7 +94,7 @@ export class LFOControl {
 
     this.offsetFader = new Controls.Fader.Receiver(
       new Controls.Fader.Spec(
-        new Controls.Base.Args(name + ' phase offset', 40, 70, 60, 15, '#999'),
+        new Controls.Base.Args('phase offset', 40, 70, 60, 15, '#999'),
         new Controls.Fader.State(0), 0, 1, 2,
         true // isHorizontal
       )
@@ -102,7 +102,7 @@ export class LFOControl {
 
     this.powerFader = new Controls.Fader.Receiver(
       new Controls.Fader.Spec(
-        new Controls.Base.Args(name + ' power', 40, 85, 60, 15, '#999'),
+        new Controls.Base.Args('power', 40, 85, 60, 15, '#999'),
         new Controls.Fader.State(1), 0.1, 4, 2,
         true // isHorizontal
       )
