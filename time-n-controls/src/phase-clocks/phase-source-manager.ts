@@ -82,23 +82,10 @@ export class PhaseSourceManager {
       }
     )
 
-    // BPM fader (for Constant mode)
-    this.bpmFader = new Controls.Fader.Receiver(
-      new Controls.Fader.Spec(
-        new Controls.Base.Args('BPM', 0, 10, 25, 15, '#48f'),
-        new Controls.Fader.State(120),
-        30, 300, 0
-      ),
-      (bpm: number) => {
-        const beatsPerBar = Math.round(this.beatsPerBarFader.value)
-        this.constantClock.setTempo(bpm, beatsPerBar)
-      }
-    )
-
     // Phase anchor (for Constant mode)
     this.phaseAnchor = new Controls.TimeAnchor.Receiver(
       new Controls.TimeAnchor.Spec(
-        new Controls.Base.Args('phase anchor', 50, 10, 25, 15, '#fa5')
+        new Controls.Base.Args('phase anchor', 50, 0, 25, 15, '#fa5')
       )
     )
     this.phaseAnchor.onSetToTime = (time: number) => {
@@ -109,6 +96,19 @@ export class PhaseSourceManager {
       this.constantClock.setAnchorTime(time)
       this.phaseAnchor.confirmTime(time)
     }
+
+    // BPM fader (for Constant mode)
+    this.bpmFader = new Controls.Fader.Receiver(
+      new Controls.Fader.Spec(
+        new Controls.Base.Args('BPM', 50, 15, 25, 15, '#48f'),
+        new Controls.Fader.State(120),
+        30, 300, 0
+      ),
+      (bpm: number) => {
+        const beatsPerBar = Math.round(this.beatsPerBarFader.value)
+        this.constantClock.setTempo(bpm, beatsPerBar)
+      }
+    )
 
     // Beats-per-bar fader (for Constant and BPM modes)
     this.beatsPerBarFader = new Controls.Fader.Receiver(

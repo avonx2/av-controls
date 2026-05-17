@@ -61,11 +61,26 @@ export type TimelineKeyframeLane = {
   renderSeq?: number;
 };
 
+export type TimelineEventPoint = {
+  t: number;
+};
+
+export type TimelineEventLane = {
+  key: string;
+  type: 'event';
+  enabled: boolean;
+  events: TimelineEventPoint[];
+  seq?: number;
+  renderEvents?: TimelineEventPoint[];
+  renderSeq?: number;
+};
+
 export type TimelineLane =
   | TimelineCurveLane
   | TimelineStepLane
   | TimelineTriggerLane
-  | TimelineKeyframeLane;
+  | TimelineKeyframeLane
+  | TimelineEventLane;
 
 export type TimelineControl = {
   path: string[];

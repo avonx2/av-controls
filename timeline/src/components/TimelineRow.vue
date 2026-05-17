@@ -132,9 +132,12 @@ const props = defineProps({
   onLaneTriggersUpdate: {
     type: Function as PropType<(rowId: string, laneKey: string, triggers: any[]) => void>,
     required: true,
-  },
   onLaneKeyframesUpdate: {
     type: Function as PropType<(rowId: string, laneKey: string, keyframes: any[]) => void>,
+    required: true,
+  },
+  onLaneEventsUpdate: {
+    type: Function as PropType<(rowId: string, laneKey: string, events: any[]) => void>,
     required: true,
   },
   createLaneFromButton: {
@@ -155,6 +158,10 @@ const props = defineProps({
   },
   onRenderLaneKeyframesUpdate: {
     type: Function as PropType<(rowId: string, laneKey: string, keyframes: any[]) => void>,
+    required: true,
+  },
+  onRenderLaneEventsUpdate: {
+    type: Function as PropType<(rowId: string, laneKey: string, events: any[]) => void>,
     required: true,
   },
   recordBranchManualOverrideKeyframes: {
@@ -212,11 +219,13 @@ const props = defineProps({
       :on-lane-points-update="onLanePointsUpdate"
       :on-lane-triggers-update="onLaneTriggersUpdate"
       :on-lane-keyframes-update="onLaneKeyframesUpdate"
+      :on-lane-events-update="onLaneEventsUpdate"
       :create-lane-from-button="createLaneFromButton"
       :on-clear-render-lane-click="onClearRenderLaneClick"
       :on-render-lane-points-update="onRenderLanePointsUpdate"
       :on-render-lane-triggers-update="onRenderLaneTriggersUpdate"
       :on-render-lane-keyframes-update="onRenderLaneKeyframesUpdate"
+      :on-render-lane-events-update="onRenderLaneEventsUpdate"
       :start-row-resize="startRowResize"
     />
   </div>

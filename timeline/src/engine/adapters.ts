@@ -44,7 +44,7 @@ export type KeyframeValueBuffer = {
 };
 
 export type TimelineAdapter = {
-  kind: 'curve' | 'step' | 'trigger' | 'keyframes';
+  kind: 'curve' | 'step' | 'trigger' | 'keyframes' | 'event';
   capturePayload: (state: unknown) => unknown;
   evaluateKeyframes?: (lane: TimelineLane, time: number) => unknown | null;
   getKeyframeValueBuffer?: (lane: TimelineLane) => KeyframeValueBuffer | null;
@@ -934,10 +934,16 @@ const dotsAdapter: TimelineAdapter = {
   getKeyframeValueBuffer: getDotsKeyframeValueBuffer,
 };
 
+const eventAdapter: TimelineAdapter = {
+  kind: 'event',
+  capturePayload: (state) => cloneUnknown(state),
+};
+
 export function getTimelineAdapter(spec: Controls.Base.Spec): TimelineAdapter {
   if (spec.type === Controls.Player3D.Spec.type) return player3dAdapter;
   if (spec.type === Controls.Dots.Spec.type) return dotsAdapter;
-  if (spec.type === Controls.Selector.Spec.type || spec.type === 'time-anchor') return stepAdapter;
+  if (spec.type === Controls.Selector.Spec.type) return stepAdapter;
+  if (spec.type === 'time-anchor') return eventAdapter;
   if (spec.type === Controls.Switch.Spec.type || spec.type === Controls.ConfirmSwitch.Spec.type || spec.type === Controls.Pad.Spec.type) return triggerAdapter;
   return curveAdapter;
 }

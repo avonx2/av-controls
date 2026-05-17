@@ -5,6 +5,7 @@ import KeyframeLane from './KeyframeLane.vue'
 import StepLane from './StepLane.vue'
 import TriggerLane from './TriggerLane.vue'
 import GroupLane from './GroupLane.vue'
+import EventLane from './EventLane.vue'
 
 type RowLike = {
   id: string
@@ -97,6 +98,10 @@ const props = defineProps({
     type: Function as PropType<(rowId: string, laneKey: string, keyframes: any[]) => void>,
     required: true,
   },
+  onLaneEventsUpdate: {
+    type: Function as PropType<(rowId: string, laneKey: string, events: any[]) => void>,
+    required: true,
+  },
   createLaneFromButton: {
     type: Function as PropType<(rowId: string, lane: any) => void>,
     required: true,
@@ -115,6 +120,10 @@ const props = defineProps({
   },
   onRenderLaneKeyframesUpdate: {
     type: Function as PropType<(rowId: string, laneKey: string, keyframes: any[]) => void>,
+    required: true,
+  },
+  onRenderLaneEventsUpdate: {
+    type: Function as PropType<(rowId: string, laneKey: string, events: any[]) => void>,
     required: true,
   },
   startRowResize: {
@@ -234,6 +243,19 @@ function getPaneHeight() {
               :snap-enabled="audioSnapEnabled"
               :snap-markers="audioMarkers"
               @update:triggers="(triggers) => onLaneTriggersUpdate(row.id, lane.key, triggers)"
+            />
+            <EventLane
+              v-else-if="lane.kind === 'event'"
+              :lane="lane.lane"
+              :collapsed="!!rowDisplay?.collapsed"
+              :manual-override="!!rowDisplay?.manualOverride"
+              :height="getPaneHeight()"
+              :width="laneWidthPx"
+              :seconds-per-width="secondsPerWidth"
+              :time-offset="timeOffset"
+              :snap-enabled="audioSnapEnabled"
+              :snap-markers="audioMarkers"
+              @update:events="(events) => onLaneEventsUpdate(row.id, lane.key, events)"
             />
             <KeyframeLane
               v-else-if="lane.kind === 'keyframes'"

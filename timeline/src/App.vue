@@ -101,7 +101,7 @@ type LaneRange = {
   wrap?: boolean
 }
 
-type LaneKind = 'curve' | 'step' | 'trigger' | 'keyframes'
+type LaneKind = 'curve' | 'step' | 'trigger' | 'keyframes' | 'event'
 
 type RenderCurveLane = {
   kind: 'curve'
@@ -138,6 +138,14 @@ type RenderKeyframeLane = {
   renderLane: Timeline.TimelineKeyframeLane | null
 }
 
+type RenderEventLane = {
+  kind: 'event'
+  key: string
+  title: string
+  lane: Timeline.TimelineEventLane
+  renderLane: Timeline.TimelineEventLane | null
+}
+
 type RenderAbsentLane = {
   kind: 'absent'
   key: string
@@ -145,7 +153,7 @@ type RenderAbsentLane = {
   laneKind: LaneKind
 }
 
-type RenderLane = RenderCurveLane | RenderStepLane | RenderTriggerLane | RenderKeyframeLane | RenderAbsentLane
+type RenderLane = RenderCurveLane | RenderStepLane | RenderTriggerLane | RenderKeyframeLane | RenderEventLane | RenderAbsentLane
 
 const rowStates = reactive<Record<string, RowState>>({})
 const controlEnabled = reactive<Record<string, boolean>>({})
@@ -542,6 +550,7 @@ function closeProjectMenu() {
 function formatLaneKind(lane: Timeline.TimelineLane) {
   if (lane.type === 'keyframes') return 'keyframes'
   if (lane.type === 'trigger') return 'trigger'
+  if (lane.type === 'event') return 'event'
   if (lane.type === 'step') return 'step'
   return 'curve'
 }
@@ -1068,7 +1077,16 @@ async function runRenderLoop(config: RenderConfig, startFrame = 0) {
         break
       }
 
-      const time = config.startTime + frameIndex / Math.max(1, config.fps)
+      let time = config.startTime + frameIndex / Math.max(1, config.fps)
+      if (loopEnabled.value && config.outputFormat === 'live') {
+        const min = Math.min(loopFromSec.value, loopDurationSec.value)
+        const max = Math.max(loopFromSec.value, loopDurationSec.value)
+        if (max > min && time >= max) {
+          const loopLength = max - min
+          time = min + ((time - max) % loopLength)
+        }
+      }
+
       logTimelineRender('frame-dispatch', {
         frameIndex,
         time,
@@ -1956,6 +1974,13 @@ function isKeyframeTrackRow(rowId: string) {
   return Timeline.getTimelineAdapter(spec).kind === 'keyframes'
 }
 
+function isEventTrackRow(rowId: string) {
+  const row = rowById.value.get(rowId)
+  const spec = row?.spec as Controls.Base.Spec | undefined
+  if (!spec) return false
+  return Timeline.getTimelineAdapter(spec).kind === 'event'
+}
+
 function getKeyframeLaneKey(rowId: string) {
   const row = rowById.value.get(rowId)
   const spec = row?.spec as Controls.Base.Spec | undefined
@@ -2253,6 +2278,29 @@ watch(fps, () => {
 function tickRaf() {
   if (!rendering.value) {
     rafNow.value = performance.now()
+    
+    if (playing.value && loopEnabled.value) {
+      const min = Math.min(loopFromSec.value, loopDurationSec.value)
+      const max = Math.max(loopFromSec.value, loopDurationSec.value)
+      if (max > min) {
+        const delta = (rafNow.value - lastStateAt.value) / 1000
+        const time = Math.max(0, lastStateTime.value + delta)
+        if (time >= max) {
+          const loopLength = max - min
+          const overshoot = (time - max) % loopLength
+          const wrappedTime = min + overshoot
+          
+          lastStateTime.value = wrappedTime
+          lastStateAt.value = rafNow.value
+          timelineTime.value = wrappedTime
+          
+          // Send explicit time update for wrap
+          artworkClient.value?.setTime(wrappedTime)
+          timelineClient.value?.applyAutomation(wrappedTime)
+        }
+      }
+    }
+    
     updatePlaybackUi(false)
   }
   rafId = requestAnimationFrame(tickRaf)
@@ -2306,7 +2354,18 @@ function restoreScrollTopDeferred(scrollTop: number) {
 const displayTime = computed(() => {
   if (!playing.value || rendering.value) return lastStateTime.value
   const delta = (rafNow.value - lastStateAt.value) / 1000
-  return Math.max(0, lastStateTime.value + delta)
+  let time = Math.max(0, lastStateTime.value + delta)
+  
+  if (loopEnabled.value) {
+    const min = Math.min(loopFromSec.value, loopDurationSec.value)
+    const max = Math.max(loopFromSec.value, loopDurationSec.value)
+    if (max > min && time >= max) {
+      const loopLength = max - min
+      time = min + ((time - max) % loopLength)
+    }
+  }
+  
+  return time
 })
 
 function updatePlaybackUi(forceFooter = false) {
@@ -2606,6 +2665,24 @@ function onScrubPointerDown(e: PointerEvent) {
   // Don't scrub if ctrl/cmd held (that's for pan/zoom)
   if (e.ctrlKey || e.metaKey) return
 
+  if (e.shiftKey) {
+    const lanePlane = getLanePlaneMetrics()
+    if (!lanePlane) return
+    const x = Math.max(0, Math.min(lanePlane.width, e.clientX - lanePlane.left))
+    const clickedTime = Math.max(0, xToTime(x))
+    
+    const current = displayTime.value
+    const newFrom = Math.min(current, clickedTime)
+    const newTo = Math.max(current, clickedTime)
+    
+    updateLoopFrom(newFrom)
+    updateLoopTo(newTo)
+    if (!loopEnabled.value) {
+      toggleLoop()
+    }
+    return
+  }
+
   scrubWasPlaying = playing.value
   scrubRestoreState = artworkMode.value
   pendingPlaybackIntent.value = null
@@ -2679,7 +2756,8 @@ function clearLaneInState(state: Timeline.TimelineState | null, rowId: string, l
     if (laneKind === 'keyframes' && candidate.type === 'keyframes') return false
     if (laneKind === 'trigger' && candidate.type === 'trigger') return false
     if (laneKind === 'step' && candidate.type === 'step') return false
-    if (laneKind === 'curve' && candidate.type !== 'keyframes' && candidate.type !== 'trigger' && candidate.type !== 'step') return false
+    if (laneKind === 'event' && candidate.type === 'event') return false
+    if (laneKind === 'curve' && candidate.type !== 'keyframes' && candidate.type !== 'trigger' && candidate.type !== 'step' && candidate.type !== 'event') return false
     return true
   })
 }
@@ -2689,7 +2767,7 @@ function updateLaneInState(
   rowId: string,
   laneKey: string,
   laneKind: RenderLane['kind'],
-  payload: Timeline.TimelinePoint[] | Timeline.TimelineTrigger[] | Timeline.TimelineKeyframe[],
+  payload: Timeline.TimelinePoint[] | Timeline.TimelineTrigger[] | Timeline.TimelineKeyframe[] | Timeline.TimelineEventPoint[],
 ) {
   if (!state) return
   const control = state.controls.find(candidate => candidate.path.join('.') === rowId)
@@ -2705,7 +2783,11 @@ function updateLaneInState(
     lane.triggers = payload as Timeline.TimelineTrigger[]
     return
   }
-  if (lane.type !== 'keyframes' && lane.type !== 'trigger') {
+  if (laneKind === 'event' && lane.type === 'event') {
+    lane.events = payload as Timeline.TimelineEventPoint[]
+    return
+  }
+  if (lane.type !== 'keyframes' && lane.type !== 'trigger' && lane.type !== 'event') {
     lane.points = payload as Timeline.TimelinePoint[]
   }
 }
@@ -2749,6 +2831,10 @@ function onClearRenderLaneClick(rowId: string, laneKey: string) {
     timelineClient.value.setRenderLaneTriggers(getRowPath(rowId), laneKey, [])
     return
   }
+  if (storedLane.type === 'event') {
+    timelineClient.value.setRenderLaneEvents(getRowPath(rowId), laneKey, [])
+    return
+  }
   timelineClient.value.setRenderLanePoints(getRowPath(rowId), laneKey, [])
 }
 
@@ -2756,12 +2842,14 @@ function laneHasData(lane: RenderLane) {
   if (lane.kind === 'absent') return false
   if (lane.kind === 'keyframes') return lane.lane.keyframes.length > 0
   if (lane.kind === 'trigger') return lane.lane.triggers.length > 0
+  if (lane.kind === 'event') return lane.lane.events.length > 0
   return lane.lane.points.length > 0
 }
 
 function laneHasAutomation(lane: Timeline.TimelineLane) {
   if (lane.type === 'keyframes') return lane.keyframes.length > 0 || (lane.renderKeyframes?.length ?? 0) > 0
   if (lane.type === 'trigger') return lane.triggers.length > 0 || (lane.renderTriggers?.length ?? 0) > 0
+  if (lane.type === 'event') return lane.events.length > 0 || (lane.renderEvents?.length ?? 0) > 0
   if (lane.type === 'step') return lane.points.length > 0 || (lane.renderPoints?.length ?? 0) > 0
   return lane.points.length > 0 || (lane.renderPoints?.length ?? 0) > 0
 }
@@ -2773,6 +2861,8 @@ function createLane(rowId: string, lane: RenderAbsentLane) {
       ? { type: 'keyframes', key: lane.key, enabled: true, keyframes: [] }
       : lane.laneKind === 'trigger'
       ? { type: 'trigger', key: lane.key, enabled: true, triggers: [] }
+      : lane.laneKind === 'event'
+      ? { type: 'event', key: lane.key, enabled: true, events: [] }
       : lane.laneKind === 'step'
       ? { type: 'step', key: lane.key, enabled: true, points: [] }
       : { type: 'curve', key: lane.key, enabled: true, points: [] }
@@ -2801,6 +2891,12 @@ function createLaneFromButton(rowId: string, lane: RenderAbsentLane) {
   }
 
   const time = displayTime.value
+  
+  if (lane.laneKind === 'event') {
+    onLaneEventsUpdate(rowId, lane.key, [{ t: time }])
+    return
+  }
+  
   if (lane.laneKind === 'trigger') {
     const nextValue = Math.max(0, getInitialLaneValue(rowId, lane.key))
     const duration = Math.max(0.05, secondsPerWidth.value / 12)
@@ -2914,6 +3010,15 @@ const rowLanesById = computed(() => {
             renderLane: renderOverrideKeys.has(rawLane.key) ? getKeyframeRenderLane(rawLane) : null,
           } satisfies RenderKeyframeLane
         }
+        if (rawLane.type === 'event') {
+          return {
+            kind: 'event',
+            key: rawLane.key,
+            title: rawLane.key,
+            lane: rawLane,
+            renderLane: renderOverrideKeys.has(rawLane.key) ? getEventRenderLane(rawLane) : null,
+          } satisfies RenderEventLane
+        }
         if (rawLane.type === 'step') {
           return {
             kind: 'step',
@@ -2949,13 +3054,14 @@ const rowLanesById = computed(() => {
         title: laneKey,
         laneKind: isKeyframeTrackRow(rowId)
           ? 'keyframes'
+          : isEventTrackRow(rowId)
+          ? 'event'
           : isTriggerTrackRow(rowId)
           ? 'trigger'
           : isStepTrackRow(rowId)
           ? 'step'
           : 'curve',
-      } satisfies RenderAbsentLane
-    })
+        } satisfies RenderAbsentLane    })
     byRowId.set(rowId, lanes)
   }
   return byRowId
@@ -3193,6 +3299,7 @@ function isLaneCompatibleWithRow(rowId: string, lane: Timeline.TimelineLane) {
     || (adapterKind === 'step' && laneKind === 'step')
     || (adapterKind === 'trigger' && laneKind === 'trigger')
     || (adapterKind === 'keyframes' && laneKind === 'keyframes')
+    || (adapterKind === 'event' && laneKind === 'event')
 
   return compatible
     ? { compatible: true, reason: '' }
@@ -3296,6 +3403,14 @@ function getKeyframeRenderLane(lane: Timeline.TimelineKeyframeLane): Timeline.Ti
     ...lane,
     key: `${lane.key}__render`,
     keyframes: lane.renderKeyframes ?? [],
+  }
+}
+
+function getEventRenderLane(lane: Timeline.TimelineEventLane): Timeline.TimelineEventLane {
+  return {
+    ...lane,
+    key: `${lane.key}__render`,
+    events: lane.renderEvents ?? [],
   }
 }
 
@@ -3526,6 +3641,34 @@ function onRenderLanePointsUpdate(rowId: string, laneKey: string, points: Timeli
 function onRenderLaneTriggersUpdate(rowId: string, laneKey: string, triggers: Timeline.TimelineTrigger[]) {
   if (!timelineClient.value) return
   timelineClient.value.setRenderLaneTriggers(getRowPath(rowId), laneKey, triggers)
+}
+
+function onRenderLaneEventsUpdate(rowId: string, laneKey: string, events: Timeline.TimelineEventPoint[]) {
+  if (!timelineClient.value) return
+  timelineClient.value.setRenderLaneEvents(getRowPath(rowId), laneKey, events)
+}
+
+function onLaneEventsUpdate(rowId: string, laneKey: string, events: Timeline.TimelineEventPoint[]) {
+  if (!timelineClient.value) return
+  activateControl(rowId)
+  const storedLane = getStoredEditableLane(rowId, laneKey, 'event')
+  if (!storedLane) {
+    const newLane: Timeline.TimelineEventLane = {
+      type: 'event',
+      key: laneKey,
+      enabled: true,
+      events,
+    }
+    addLaneInState(timelineStateRaw.value, rowId, newLane)
+    addLaneInState(timelineState.value, rowId, newLane)
+    timelineClient.value.addLane(getRowPath(rowId), newLane)
+    sendCurrentAutomationFrame()
+    return
+  }
+  updateLaneInState(timelineStateRaw.value, rowId, storedLane.key, 'event', events)
+  updateLaneInState(timelineState.value, rowId, laneKey, 'event', events)
+  timelineClient.value.setLaneEvents(getRowPath(rowId), laneKey, events)
+  sendCurrentAutomationFrame()
 }
 
 function onRenderLaneKeyframesUpdate(rowId: string, laneKey: string, keyframes: Timeline.TimelineKeyframe[]) {
@@ -3886,11 +4029,13 @@ watch(artworkClient, (client) => {
         :on-lane-points-update="onLanePointsUpdate"
         :on-lane-triggers-update="onLaneTriggersUpdate"
         :on-lane-keyframes-update="onLaneKeyframesUpdate"
+        :on-lane-events-update="onLaneEventsUpdate"
         :create-lane-from-button="createLaneFromButton"
         :on-clear-render-lane-click="onClearRenderLaneClick"
         :on-render-lane-points-update="onRenderLanePointsUpdate"
         :on-render-lane-triggers-update="onRenderLaneTriggersUpdate"
         :on-render-lane-keyframes-update="onRenderLaneKeyframesUpdate"
+        :on-render-lane-events-update="onRenderLaneEventsUpdate"
         :start-row-resize="startRowResize"
         :expand-parent-row="expandParentRow"
         :toggle-audio-expanded="toggleAudioExpanded"

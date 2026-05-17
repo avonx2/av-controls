@@ -236,6 +236,10 @@ defineProps({
     type: Function as PropType<(rowId: string, laneKey: string, keyframes: any[]) => void>,
     required: true,
   },
+  onLaneEventsUpdate: {
+    type: Function as PropType<(rowId: string, laneKey: string, events: any[]) => void>,
+    required: true,
+  },
   createLaneFromButton: {
     type: Function as PropType<(rowId: string, lane: any) => void>,
     required: true,
@@ -254,6 +258,10 @@ defineProps({
   },
   onRenderLaneKeyframesUpdate: {
     type: Function as PropType<(rowId: string, laneKey: string, keyframes: any[]) => void>,
+    required: true,
+  },
+  onRenderLaneEventsUpdate: {
+    type: Function as PropType<(rowId: string, laneKey: string, events: any[]) => void>,
     required: true,
   },
   startRowResize: {
@@ -317,8 +325,8 @@ defineProps({
         @wheel="onLaneWheel"
         @pointerdown="onLanePointerDown"
       >
-        <div v-if="loopRangeStyle" class="loop-range-overlay header" :style="loopRangeStyle" />
         <div class="time-markers">
+          <div v-if="loopRangeStyle" class="loop-range-overlay header" :style="loopRangeStyle" />
           <div
             v-for="marker in headerTimeMarkers"
             :key="marker.time"
@@ -394,11 +402,13 @@ defineProps({
             :on-lane-points-update="onLanePointsUpdate"
             :on-lane-triggers-update="onLaneTriggersUpdate"
             :on-lane-keyframes-update="onLaneKeyframesUpdate"
+            :on-lane-events-update="onLaneEventsUpdate"
             :create-lane-from-button="createLaneFromButton"
             :on-clear-render-lane-click="onClearRenderLaneClick"
             :on-render-lane-points-update="onRenderLanePointsUpdate"
             :on-render-lane-triggers-update="onRenderLaneTriggersUpdate"
             :on-render-lane-keyframes-update="onRenderLaneKeyframesUpdate"
+            :on-render-lane-events-update="onRenderLaneEventsUpdate"
             :start-row-resize="startRowResize"
           />
           <template v-else>
@@ -631,12 +641,13 @@ defineProps({
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(80, 180, 120, 0.03);
+  background: rgba(80, 180, 120, 0.12);
+  border-left: 2px solid rgba(80, 180, 120, 0.6);
+  border-right: 2px solid rgba(80, 180, 120, 0.6);
   pointer-events: none;
 }
 
 .loop-range-overlay.header {
-  left: calc(var(--lane-gap, 0.8rem) + 0px);
   z-index: 0;
 }
 

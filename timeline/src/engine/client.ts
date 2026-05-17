@@ -236,10 +236,31 @@ function getLaneValueMap(
   return { value: laneValues.value ?? currentValues.value ?? 0 };
 }
 
+export function getEventLaneValueBuffer(events: TimelineEventPoint[]) {
+  return {
+    getValue(time: number) {
+      if (!events.length) return null;
+      let latestEvent = null;
+      for (const e of events) {
+        if (e.t <= time) {
+          latestEvent = e;
+        } else {
+          break;
+        }
+      }
+      return latestEvent ? latestEvent.t : null;
+    }
+  };
+}
+
 function buildSignalLeaf(spec: Controls.Base.Spec, values: Record<string, number>): Controls.Base.Signal | null {
   if (spec.type === Controls.Fader.Spec.type || spec.type === Controls.Knob.Spec.type) {
     const value = values.value;
     return isNumber(value) ? { value } as Controls.Base.Signal : null;
+  }
+  if (spec.type === 'time-anchor') {
+    const time = values.value;
+    return isNumber(time) ? { action: 'set-to-time', time } as Controls.Base.Signal : null;
   }
   if (spec.type === Controls.Switch.Spec.type || spec.type === Controls.ConfirmSwitch.Spec.type) {
     const on = values.on ?? values.value;
@@ -301,8 +322,8 @@ function getSignalSignature(signal: Controls.Base.Signal): string {
   return JSON.stringify(signal);
 }
 
-function canSkipAutomationSignal(spec: Controls.Base.Spec, adapterKind: 'curve' | 'step' | 'trigger' | 'keyframes') {
-  if (adapterKind === 'trigger') {
+function canSkipAutomationSignal(spec: Controls.Base.Spec, adapterKind: 'curve' | 'step' | 'trigger' | 'keyframes' | 'event') {
+  if (adapterKind === 'trigger' || adapterKind === 'event') {
     return false;
   }
   if (
@@ -329,6 +350,13 @@ function hasTriggerEventInReverseWindow(triggers: TimelineTrigger[], currentTime
     }
   }
   return false;
+}
+
+function hasEventInReverseWindow(events: TimelineEventPoint[], currentTime: number, previousTime: number) {
+  if (!(currentTime < previousTime)) {
+    return false;
+  }
+  return events.some(e => e.t > currentTime && e.t < previousTime);
 }
 
 function hasStepEventInReverseWindow(points: TimelinePoint[], currentTime: number, previousTime: number) {
@@ -562,6 +590,16 @@ export class TimelineClient {
     }
   }
 
+  setLaneEvents(path: string[], laneKey: string, events: TimelineEventLane['events']) {
+    const seq = this.nextSeq();
+    const lane = this.ensureControlState(path).lanes.find(candidate => candidate.key === laneKey);
+    if (lane && lane.type === 'event') {
+      lane.events = [...events].sort((a, b) => a.t - b.t);
+      lane.seq = seq;
+      this.emitEdit(seq);
+    }
+  }
+
   setRenderLanePoints(path: string[], laneKey: string, points: TimelinePoint[]) {
     const seq = this.nextSeq();
     const lane = this.ensureControlState(path).lanes.find(candidate => candidate.key === laneKey);
@@ -587,6 +625,16 @@ export class TimelineClient {
     const lane = this.ensureControlState(path).lanes.find(candidate => candidate.key === laneKey);
     if (lane && lane.type === 'keyframes') {
       lane.renderKeyframes = sortTimelineKeyframes(keyframes);
+      lane.renderSeq = seq;
+      this.emitEdit(seq);
+    }
+  }
+
+  setRenderLaneEvents(path: string[], laneKey: string, events: TimelineEventLane['events']) {
+    const seq = this.nextSeq();
+    const lane = this.ensureControlState(path).lanes.find(candidate => candidate.key === laneKey);
+    if (lane && lane.type === 'event') {
+      lane.renderEvents = [...events].sort((a, b) => a.t - b.t);
       lane.renderSeq = seq;
       this.emitEdit(seq);
     }
@@ -730,6 +778,15 @@ export class TimelineClient {
           && !hasTriggerEventInReverseWindow(triggerSource, currentTime, previousTime)
         ) continue;
         if (
+          lane.type === 'event'
+          && currentTime < previousTime
+          && !hasEventInReverseWindow(
+            useRenderLanes && lane.renderEvents !== undefined ? lane.renderEvents : lane.events,
+            currentTime,
+            previousTime,
+          )
+        ) continue;
+        if (
           isStepLane(lane)
           && currentTime < previousTime
           && !hasStepEventInReverseWindow(
@@ -740,10 +797,12 @@ export class TimelineClient {
         ) continue;
         const value = lane.type === 'trigger'
           ? getTriggerLaneValueBuffer(triggerSource ?? []).getValue(currentTime)
+          : lane.type === 'event'
+          ? getEventLaneValueBuffer(useRenderLanes && lane.renderEvents !== undefined ? lane.renderEvents : lane.events).getValue(currentTime)
           : (() => {
               const points = (isBezierCurveLane(lane) || isStepLane(lane)) && useRenderLanes && lane.renderPoints !== undefined
                 ? lane.renderPoints
-                : lane.points;
+                : (lane as any).points;
               return isStepLane(lane)
                 ? getStepLaneValueBuffer(points, range.min, range.max).getValue(currentTime)
                 : getPlaybackLaneSampleBuffer(points, range.min, range.max, range.wrap ?? false).getValue(currentTime);

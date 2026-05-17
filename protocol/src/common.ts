@@ -24,7 +24,8 @@ import {
   Joystick,
   Modal,
   Menu,
-  Player3D
+  Player3D,
+  TimeAnchor
 } from './controls';
 
 export type SpecsDict = {[id: string]: Controls.Base.Spec};
@@ -119,6 +120,8 @@ export function createSenderFromSpec(spec: Controls.Base.Spec): Base.Sender {
       return new Lamp.Sender(spec as Lamp.Spec)
     } else if(spec.type === Player3D.Spec.type) {
       return new Player3D.Sender(spec as Player3D.Spec)
+    } else if(spec.type === TimeAnchor.Spec.type) {
+      return new TimeAnchor.Sender(spec as TimeAnchor.Spec)
     }
     throw new Error(`Unknown control type: ${spec.type}`)
   }
