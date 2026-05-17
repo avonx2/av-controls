@@ -87,11 +87,11 @@ export class SwitchablePhaseClock implements PhaseClock {
    * Tick all clocks that need updating (auto and tap).
    * Constant and off clocks tick when the wrapper ticks.
    */
-  tickAll(deltaS?: number): void {
+  tickAll(deltaS?: number, now?: number): void {
     // Auto and tap need explicit ticking
     // Constant and off will be ticked when tick() is called on the wrapper
-    this.autoClock.tick(deltaS)
-    this.tapClock.tick(deltaS)
+    this.autoClock.tick(deltaS, now)
+    this.tapClock.tick(deltaS, now)
   }
 
   // ============ PhaseClock interface implementation ============
@@ -125,8 +125,8 @@ export class SwitchablePhaseClock implements PhaseClock {
     return this.activeClock.getCappedTickDeltaS(amount)
   }
 
-  tick(deltaS?: number): void {
-    this.activeClock.tick(deltaS)
+  tick(deltaS?: number, now?: number): void {
+    this.activeClock.tick(deltaS, now)
   }
 
   reset(): void {

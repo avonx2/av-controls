@@ -14,6 +14,7 @@ import LabelComponent from './Label.vue'
 import ConfirmSwitchComponent from './ConfirmSwitch.vue'
 import CakeComponent from './Cake.vue'
 import PresetButtonComponent from './PresetButton.vue'
+import TimeAnchorComponent from './TimeAnchor.vue'
 import LetterboxComponent from './Letterbox.vue'
 import TextboxComponent from './Textbox.vue'
 import DotsComponent from './Dots.vue'
@@ -473,6 +474,7 @@ const showlabels = false
     <ConfirmSwitchComponent v-else-if="type === 'confirm-switch'" :confirmSwitch="control as Controls.ConfirmSwitch.Sender"/>
     <CakeComponent v-else-if="type === 'cake'" :cake="control as Controls.Cake.Sender"/>
     <PresetButtonComponent v-else-if="type === 'preset-button'" :presetButton="control as Controls.PresetButton.Sender"/>
+    <TimeAnchorComponent v-else-if="type === 'time-anchor'" :timeAnchor="control as Controls.TimeAnchor.Sender"/>
     <LetterboxComponent v-else-if="type === 'letterbox'" :letterbox="control as Controls.Letterbox.Sender"/>
     <TextboxComponent v-else-if="type === 'textbox'" :textbox="control as Controls.Textbox.Sender"/>
     <DotsComponent v-else-if="type === 'dots'" :dots="control as Controls.Dots.Sender"/>

@@ -21,9 +21,14 @@ export interface TimeClock {
   getCappedTickDeltaS(amount?: number): number
 
   /**
+   * Get the absolute time in seconds (if provided via tick) or accumulated elapsed time.
+   */
+  getAbsoluteTime(): number
+
+  /**
    * Call once per frame to update internal state.
    */
-  tick(deltaS?: number): void
+  tick(deltaS?: number, now?: number): void
 
   /**
    * Reset clock state to its initial value.
@@ -83,6 +88,7 @@ export interface PhaseClock extends TimeClock {
 export abstract class BasePhaseClockImpl implements PhaseClock {
   protected queues: PhaseQueue[] = []
   protected seconds = 0
+  protected absoluteTime = 0
   protected tickDeltaS = 0
   protected lastTickTime = Date.now()
 
@@ -99,6 +105,10 @@ export abstract class BasePhaseClockImpl implements PhaseClock {
     return this.seconds
   }
 
+  getAbsoluteTime(): number {
+    return this.absoluteTime
+  }
+
   getTickDeltaS(): number {
     return this.tickDeltaS
   }
@@ -107,11 +117,16 @@ export abstract class BasePhaseClockImpl implements PhaseClock {
     return Math.max(-amount, Math.min(amount, this.tickDeltaS))
   }
 
-  tick(deltaS?: number): void {
-    const now = Date.now()
-    this.tickDeltaS = deltaS ?? ((now - this.lastTickTime) / 1000)
-    this.lastTickTime = now
+  tick(deltaS?: number, now?: number): void {
+    const sysNow = Date.now()
+    this.tickDeltaS = deltaS ?? ((sysNow - this.lastTickTime) / 1000)
+    this.lastTickTime = sysNow
     this.seconds += this.tickDeltaS
+    if (now !== undefined) {
+      this.absoluteTime = now
+    } else {
+      this.absoluteTime += this.tickDeltaS
+    }
     this.notifyQueues()
   }
 
@@ -128,6 +143,7 @@ export abstract class BasePhaseClockImpl implements PhaseClock {
 
   reset(): void {
     this.seconds = 0
+    this.absoluteTime = 0
     this.tickDeltaS = 0
     this.lastTickTime = Date.now()
   }

@@ -937,7 +937,7 @@ const dotsAdapter: TimelineAdapter = {
 export function getTimelineAdapter(spec: Controls.Base.Spec): TimelineAdapter {
   if (spec.type === Controls.Player3D.Spec.type) return player3dAdapter;
   if (spec.type === Controls.Dots.Spec.type) return dotsAdapter;
-  if (spec.type === Controls.Selector.Spec.type) return stepAdapter;
+  if (spec.type === Controls.Selector.Spec.type || spec.type === 'time-anchor') return stepAdapter;
   if (spec.type === Controls.Switch.Spec.type || spec.type === Controls.ConfirmSwitch.Spec.type || spec.type === Controls.Pad.Spec.type) return triggerAdapter;
   return curveAdapter;
 }

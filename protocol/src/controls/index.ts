@@ -21,3 +21,4 @@ export * as Selector from './selector';
 export * as Switch from './switch';
 export * as Textbox from './textbox';
 export * as Tabs from './tabs';
+export * as TimeAnchor from './time-anchor';

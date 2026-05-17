@@ -55,6 +55,7 @@ export class PhaseSourceManager {
   private tapPad!: Controls.Pad.Receiver
   private tapModeSelector!: Controls.Selector.Receiver
   private setBarPad!: Controls.Pad.Receiver
+  private phaseAnchor!: Controls.TimeAnchor.Receiver
 
   constructor(autoPhaseConfig: AutoPhaseConfig) {
     // Initialize clocks
@@ -93,6 +94,21 @@ export class PhaseSourceManager {
         this.constantClock.setTempo(bpm, beatsPerBar)
       }
     )
+
+    // Phase anchor (for Constant mode)
+    this.phaseAnchor = new Controls.TimeAnchor.Receiver(
+      new Controls.TimeAnchor.Spec(
+        new Controls.Base.Args('phase anchor', 50, 10, 25, 15, '#fa5')
+      )
+    )
+    this.phaseAnchor.onSetToTime = (time: number) => {
+      this.constantClock.setAnchorTime(time)
+    }
+    this.phaseAnchor.onSetToNow = () => {
+      const time = this.constantClock.getAbsoluteTime()
+      this.constantClock.setAnchorTime(time)
+      this.phaseAnchor.confirmTime(time)
+    }
 
     // Beats-per-bar fader (for Constant and BPM modes)
     this.beatsPerBarFader = new Controls.Fader.Receiver(
@@ -194,6 +210,7 @@ export class PhaseSourceManager {
     if (this.currentMode === 'constant') {
       controls['bpm'] = this.bpmFader
       controls['beats/bar'] = this.beatsPerBarFader
+      controls['phase anchor'] = this.phaseAnchor
     }
 
     if (this.currentMode === 'bpm') {

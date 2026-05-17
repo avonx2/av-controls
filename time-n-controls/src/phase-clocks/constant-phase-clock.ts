@@ -19,6 +19,8 @@ export class ConstantPhaseClock extends BasePhaseClockImpl {
   private unwrappedPhase = 0
   private phaseRate = 0.5  // Default 120 BPM, 4/4
 
+  private anchorTime: number | null = null
+
   constructor(bpm = 120, beatsPerBar = 4) {
     super()
     this.setTempo(bpm, beatsPerBar)
@@ -37,6 +39,10 @@ export class ConstantPhaseClock extends BasePhaseClockImpl {
   setBeatsPerBar(beatsPerBar: number) {
     const bpm = this.getBpm()
     this.setTempo(bpm, beatsPerBar)
+  }
+
+  setAnchorTime(time: number | null) {
+    this.anchorTime = time
   }
 
   getBpm(): number {
@@ -73,18 +79,19 @@ export class ConstantPhaseClock extends BasePhaseClockImpl {
     this.phase = ((phase % 1) + 1) % 1
   }
 
-  tick(deltaS?: number): void {
-    // Update time
-    const now = Date.now()
-    this.tickDeltaS = deltaS ?? ((now - this.lastTickTime) / 1000)
-    this.lastTickTime = now
-    this.seconds += this.tickDeltaS
+  tick(deltaS?: number, now?: number): void {
+    super.tick(deltaS, now)
 
-    // Update phase
-    const deltaPhase = this.tickDeltaS * this.phaseRate
-    this.unwrappedPhase += deltaPhase
+    if (this.anchorTime !== null) {
+      // Calculate phase precisely based on absolute timeline time
+      this.unwrappedPhase = (this.absoluteTime - this.anchorTime) * this.phaseRate
+    } else {
+      // Fallback to incremental time if no anchor is set
+      const deltaPhase = this.tickDeltaS * this.phaseRate
+      this.unwrappedPhase += deltaPhase
+    }
+    
     this.phase = ((this.unwrappedPhase % 1) + 1) % 1
-
     this.notifyQueues()
   }
 
