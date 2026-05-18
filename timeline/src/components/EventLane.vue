@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, type PropType } from 'vue'
 import type { TimelineEventLane, TimelineEventPoint } from '../engine/types'
-import { snapTime } from '../snap'
+import { snapTimeToMarkers } from '../snap'
 
 const props = defineProps({
   lane: {
@@ -98,7 +98,7 @@ function onPointerMove(event: PointerEvent) {
 
   let rawTime = xToTime(currentX)
   if (props.snapEnabled && dragState.type === 'event') {
-    rawTime = snapTime(rawTime, props.snapMarkers, props.secondsPerWidth)
+    rawTime = snapTimeToMarkers(rawTime, props.snapMarkers, props.width, props.secondsPerWidth)
   }
   const t = Math.max(0, rawTime)
 
@@ -138,7 +138,7 @@ function addEventAtPointer(event: PointerEvent) {
   const x = event.clientX - parentRect.left
   let rawTime = xToTime(x)
   if (props.snapEnabled) {
-    rawTime = snapTime(rawTime, props.snapMarkers, props.secondsPerWidth)
+    rawTime = snapTimeToMarkers(rawTime, props.snapMarkers, props.width, props.secondsPerWidth)
   }
   const t = Math.max(0, rawTime)
 

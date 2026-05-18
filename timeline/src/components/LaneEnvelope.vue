@@ -2,6 +2,7 @@
 import { computed, ref, watch, onBeforeUnmount, onMounted } from 'vue'
 import * as Timeline from '../engine'
 import { snapTimeToMarkers } from '../snap'
+import PointEditorPopup from './PointEditorPopup.vue'
 
 const SVG_HIT_PADDING = 12
 
@@ -22,6 +23,43 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:points': [points: Timeline.TimelinePoint[]]
 }>()
+
+const editorPopup = ref<{
+  x: number
+  y: number
+  pointIndex: number
+  showValue: boolean
+} | null>(null)
+
+function onPointContextmenu(e: MouseEvent, index: number) {
+  e.preventDefault()
+  const point = currentPoints()[index]
+  if (!point) return
+  editorPopup.value = {
+    x: e.clientX,
+    y: e.clientY,
+    pointIndex: index,
+    showValue: (point.kind ?? 'pos') === 'pos'
+  }
+}
+
+function onEditorSave(t: number, v?: number) {
+  if (!editorPopup.value) return
+  const index = editorPopup.value.pointIndex
+  const newPoints = cloneCurrentPoints()
+  const p = newPoints[index]
+  if (p) {
+    p.t = t
+    if (v !== undefined) p.v = v
+    workingPoints.value = newPoints
+    scheduleEmit()
+  }
+  editorPopup.value = null
+}
+
+function onEditorCancel() {
+  editorPopup.value = null
+}
 
 const surfaceRef = ref<HTMLElement | null>(null)
 const isViewportVisible = ref(true)
@@ -829,22 +867,24 @@ function onPointerMove(event: PointerEvent) {
   updateDraggedPoint(event.clientX, event.clientY)
 }
 
-function onPointerUp() {
+function onPointerUp(event: PointerEvent) {
   if (dragState.value && !dragState.value.moved && !dragState.value.createdOnPointerDown) {
-    // Click without drag - remove the point
-    const point = dragState.value.point
-    const isCtrl = (point.kind ?? 'pos') === 'ctrl'
+    // Only remove on left-click (button 0)
+    if (event.button === 0) {
+      const point = dragState.value.point
+      const isCtrl = (point.kind ?? 'pos') === 'ctrl'
 
-    // Clear smooth state for adjacent positionals before removing a control point
-    if (isCtrl) {
-      clearSmoothForAdjacentPositional(point)
-    }
+      // Clear smooth state for adjacent positionals before removing a control point
+      if (isCtrl) {
+        clearSmoothForAdjacentPositional(point)
+      }
 
-    const points = ensureWorkingPoints()
-    const idx = dragState.value.pointIndex
-    if (idx >= 0) {
-      points.splice(idx, 1)
-      emitPoints()
+      const points = ensureWorkingPoints()
+      const idx = dragState.value.pointIndex
+      if (idx >= 0) {
+        points.splice(idx, 1)
+        emitPoints()
+      }
     }
   } else if (dragState.value) {
     // Check if we're clamped - if so, remove control points in collapsed segment
@@ -1061,6 +1101,7 @@ function onLineDragUp() {
         class="lane-point-group"
         :class="{ dragging: isPointDragging(point.index) }"
         @pointerdown="onPointPointerDown($event, point.index)"
+        @contextmenu="onPointContextmenu($event, point.index)"
       >
         <circle
           class="lane-point lane-point-pos"
@@ -1078,11 +1119,23 @@ function onLineDragUp() {
         class="lane-point-group"
         :class="{ dragging: isPointDragging(point.index) }"
         @pointerdown="onPointPointerDown($event, point.index)"
+        @contextmenu="onPointContextmenu($event, point.index)"
       >
         <circle class="lane-point lane-point-ctrl" :cx="point.x" :cy="point.y" r="5" />
         <circle class="lane-point-hit lane-point-ctrl" :cx="point.x" :cy="point.y" r="10" />
       </g>
     </svg>
+
+    <PointEditorPopup
+      v-if="editorPopup"
+      :x="editorPopup.x"
+      :y="editorPopup.y"
+      :initial-time="currentPoints()[editorPopup.pointIndex]!.t"
+      :initial-value="currentPoints()[editorPopup.pointIndex]!.v"
+      :show-value="editorPopup.showValue"
+      @save="onEditorSave"
+      @cancel="onEditorCancel"
+    />
   </div>
 </template>
 

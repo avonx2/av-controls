@@ -132,6 +132,7 @@ const props = defineProps({
   onLaneTriggersUpdate: {
     type: Function as PropType<(rowId: string, laneKey: string, triggers: any[]) => void>,
     required: true,
+  },
   onLaneKeyframesUpdate: {
     type: Function as PropType<(rowId: string, laneKey: string, keyframes: any[]) => void>,
     required: true,
