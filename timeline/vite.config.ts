@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'node:path'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
 
 export default defineConfig({
   base: './',
@@ -11,7 +14,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      'av-controls': path.resolve(__dirname, '../protocol/src/index.ts')
+      'av-controls': path.join(path.dirname(require.resolve('av-controls/package.json')), 'src/index.ts')
     }
   },
   optimizeDeps: {
