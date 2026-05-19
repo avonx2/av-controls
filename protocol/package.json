@@ -2,7 +2,9 @@
   "name": "av-controls",
   "version": "0.5.1",
   "description": "this is a protocol for passing audio visual control signals between tabs",
-  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "author": "felix niemeyer",
   "license": "MIT",
   "scripts": {
