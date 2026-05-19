@@ -10,7 +10,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src')
+      '@': path.resolve(__dirname, './src'),
+      'av-controls': path.resolve(__dirname, '../protocol/src/index.ts')
     }
   },
   optimizeDeps: {

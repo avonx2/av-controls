@@ -1,11 +1,12 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { Transports } from 'av-controls';
-import {
+import { Transports, Messages } from 'av-controls';
+type RootSpecification = Messages.RootSpecification;
+const {
   ControlStateRestore,
-  RootSpecification,
   walkSignalTree,
   walkUpdateTree,
-} from 'av-controls/src/messages';
+} = Messages;
+const RootSpecification = Messages.RootSpecification;
 
 const verboseForwardingLog = process.env.WS_BROKER_VERBOSE_FORWARDING === '1';
 

@@ -2,7 +2,12 @@
   "name": "time-n-controls",
   "version": "0.0.2",
   "description": "a clock and some high level controls for av-controls and visual artworks",
-  "main": "src/lib.ts",
+  "main": "./dist/lib.js",
+  "types": "./dist/lib.d.ts",
+  "exports": {
+    ".": "./dist/lib.js",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
