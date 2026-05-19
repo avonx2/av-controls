@@ -248,6 +248,10 @@ export function getEventLaneValueBuffer(events: TimelineEventPoint[]) {
           break;
         }
       }
+      // If we haven't passed any events yet, use the first future event
+      if (!latestEvent && events.length > 0) {
+        latestEvent = events[0]!;
+      }
       return latestEvent ? latestEvent.t : null;
     }
   };
@@ -658,6 +662,12 @@ export class TimelineClient {
         triggers: ensureSortedTriggers(lane.triggers ?? []),
         renderTriggers: lane.renderTriggers ? ensureSortedTriggers(lane.renderTriggers) : undefined,
       });
+    } else if (lane.type === 'event') {
+      control.lanes.push({
+        ...lane,
+        events: lane.events ? [...lane.events].sort((a, b) => a.t - b.t) : [],
+        renderEvents: lane.renderEvents ? [...lane.renderEvents].sort((a, b) => a.t - b.t) : undefined,
+      });
     } else {
       control.lanes.push({
         ...lane,
@@ -678,6 +688,9 @@ export class TimelineClient {
       this.emitEdit(this.nextSeq());
     } else if (lane && lane.type === 'keyframes' && lane.renderKeyframes === undefined) {
       lane.renderKeyframes = [];
+      this.emitEdit(this.nextSeq());
+    } else if (lane && lane.type === 'event' && lane.renderEvents === undefined) {
+      lane.renderEvents = [];
       this.emitEdit(this.nextSeq());
     }
   }
