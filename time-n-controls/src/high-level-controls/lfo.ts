@@ -140,7 +140,7 @@ export class LFOControl {
 
   // Waveform functions (normalized 0-1 input phase)
   private getSineWave(phase: number): number {
-    return 0.5 + 0.5 * Math.sin(phase * Math.PI * 2)
+    return 0.5 + 0.5 * Math.cos(phase * Math.PI * 2)
   }
 
   private getSwellSawWave(phase: number): number {
