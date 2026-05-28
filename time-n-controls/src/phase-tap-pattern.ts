@@ -2,16 +2,21 @@ import { PhaseClock } from './phase-clock'
 import { PhaseQueue } from './phase-queue'
 
 interface LoopEvent {
-  down: number
-  up: number
+  down: number  // absolute bar position [0, phasesPerCycle)
+  up: number    // absolute bar position [0, phasesPerCycle)
   velocity: number
 }
 
-/**
- * Phase-based tap pattern recorder and player.
- * Records note-on/off events inside a fixed-duration phase loop
- * and replays them from the original recording start anchor.
- */
+// Did phase advance from `last` to `current` crossing `target`?
+// Handles wrap-around (when current < last, we crossed the cycle boundary).
+function phaseCrossed(target: number, last: number, current: number): boolean {
+  const wrapped = current < last
+  if (wrapped) {
+    return target > last || target <= current
+  }
+  return target > last && target <= current
+}
+
 export class PhaseTapPattern {
   private queue: PhaseQueue
   private schedulerToken = 0
@@ -20,16 +25,12 @@ export class PhaseTapPattern {
 
   private isRecording = false
   private recordingStartUnwrappedPhase = 0
-  private pressedAtLoopTime: number | undefined
+  private pressedAtBarPos: number | undefined
   private pressedVelocity = 0
 
   private isPlaying = false
-  private playbackStartUnwrappedPhase = 0
-  private nextDownIndex = 0
-  private nextUpIndex = 0
-  private downIteration = 0
-  private upIteration = 0
   private outputIsDown = false
+  private lastPhaseInCycle: number | null = null
 
   constructor(
     private clock: PhaseClock,
@@ -37,15 +38,31 @@ export class PhaseTapPattern {
     public onOff: () => void = () => {},
     private phasesPerCycle = 1,
     lookAheadMs = 70,
-    _latencyCompensateMs = 1000 / 60
+    private onProgressUpdate?: (progress: number) => void,
   ) {
     this.queue = new PhaseQueue(lookAheadMs)
+
+    this.queue.onEveryNotify = (phase, _rate) => {
+      this.tickPlayback(phase)
+      if (this.onProgressUpdate) {
+        const progress = this.isRecording
+          ? Math.min(1, Math.max(0, (phase - this.recordingStartUnwrappedPhase) / this.phasesPerCycle))
+          : 0
+        this.onProgressUpdate(progress)
+      }
+    }
+
+    this.queue.onTimeJump = (delta) => {
+      if (this.isRecording) {
+        this.recordingStartUnwrappedPhase += delta
+      }
+      // Reset crossing detection to avoid spurious events after a clock switch
+      this.lastPhaseInCycle = null
+    }
+
     clock.registerQueue(this.queue)
   }
 
-  /**
-   * Record a tap (note-on) at the current phase.
-   */
   tap(velocity = 1) {
     const now = this.clock.getPredictedUnwrappedPhase()
     this.finalizeRecordingIfNeeded(now)
@@ -54,36 +71,26 @@ export class PhaseTapPattern {
       this.startRecording(now)
     }
 
-    this.pressedAtLoopTime = Math.max(0, now - this.recordingStartUnwrappedPhase)
+    this.pressedAtBarPos = ((now % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
     this.pressedVelocity = velocity
     this.onOn(velocity)
   }
 
-  /**
-   * Record a release (note-off) for the current tap.
-   */
   release() {
     const now = this.clock.getPredictedUnwrappedPhase()
     this.finalizeRecordingIfNeeded(now)
 
-    if (!this.isRecording || this.pressedAtLoopTime === undefined) {
+    if (!this.isRecording || this.pressedAtBarPos === undefined) {
       return
     }
 
-    const up = Math.min(this.phasesPerCycle, Math.max(0, now - this.recordingStartUnwrappedPhase))
-    this.events.push({
-      down: this.pressedAtLoopTime,
-      up,
-      velocity: this.pressedVelocity
-    })
-    this.pressedAtLoopTime = undefined
+    const up = ((now % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
+    this.events.push({ down: this.pressedAtBarPos, up, velocity: this.pressedVelocity })
+    this.pressedAtBarPos = undefined
     this.pressedVelocity = 0
     this.onOff()
   }
 
-  /**
-   * Get the current position within the active loop in phase units.
-   */
   getPhaseInCycle(): number {
     const now = this.clock.getPredictedUnwrappedPhase()
 
@@ -92,54 +99,38 @@ export class PhaseTapPattern {
     }
 
     if (this.isPlaying) {
-      const loopTime = now - this.playbackStartUnwrappedPhase
-      return ((loopTime % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
+      return ((now % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
     }
 
     return 0
   }
 
-  /**
-   * Stop playback/recording and silence any active note.
-   */
   stop() {
-    this.schedulerToken++
-    this.queue.cancelAll()
-
-    if (this.outputIsDown || this.pressedAtLoopTime !== undefined) {
+    if (this.outputIsDown || this.pressedAtBarPos !== undefined) {
       this.onOff()
     }
 
+    this.schedulerToken++
+    this.queue.cancelAll()
+
     this.isRecording = false
-    this.pressedAtLoopTime = undefined
+    this.pressedAtBarPos = undefined
     this.pressedVelocity = 0
 
     this.isPlaying = false
     this.outputIsDown = false
-    this.nextDownIndex = 0
-    this.nextUpIndex = 0
-    this.downIteration = 0
-    this.upIteration = 0
+    this.lastPhaseInCycle = null
   }
 
-  /**
-   * Clear the recorded pattern.
-   */
   clear() {
     this.stop()
     this.events = []
   }
 
-  /**
-   * Get the number of taps in the current pattern.
-   */
   getPatternLength(): number {
     return this.events.length
   }
 
-  /**
-   * Cleanup - unregister from clock.
-   */
   dispose() {
     this.stop()
     this.clock.removeQueue(this.queue)
@@ -167,146 +158,76 @@ export class PhaseTapPattern {
     const recordEnd = this.recordingStartUnwrappedPhase + this.phasesPerCycle
     if (now < recordEnd) return
 
-    if (this.pressedAtLoopTime !== undefined) {
-      this.events.push({
-        down: this.pressedAtLoopTime,
-        up: this.phasesPerCycle,
-        velocity: this.pressedVelocity,
-      })
-      this.pressedAtLoopTime = undefined
+    if (this.pressedAtBarPos !== undefined) {
+      // Note still held at recording end — close it at the cycle boundary (= recording start position)
+      const cycleAnchor = ((this.recordingStartUnwrappedPhase % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
+      this.events.push({ down: this.pressedAtBarPos, up: cycleAnchor, velocity: this.pressedVelocity })
+      this.pressedAtBarPos = undefined
       this.pressedVelocity = 0
       this.onOff()
     }
 
     this.isRecording = false
-    if (this.events.length === 0) {
-      return
-    }
 
-    this.startPlayback(now)
-  }
+    if (this.events.length === 0) return
 
-  private startPlayback(now: number) {
-    this.isPlaying = true
     this.events.sort((a, b) => a.down - b.down)
-    this.playbackStartUnwrappedPhase = this.getPlaybackLoopStart(now)
-    this.outputIsDown = false
-    this.nextDownIndex = 0
-    this.nextUpIndex = 0
-    this.downIteration = 0
-    this.upIteration = 0
-    this.initializePlaybackState(now)
-    this.scheduleNextPlaybackEvent()
+    this.isPlaying = true
+    this.lastPhaseInCycle = null
   }
 
-  private getPlaybackLoopStart(now: number) {
-    const elapsed = now - this.recordingStartUnwrappedPhase
-    const phaseInCycle = ((elapsed % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
-    return now - phaseInCycle
-  }
-
-  private initializePlaybackState(now: number) {
-    const currentLoopTime = ((now - this.playbackStartUnwrappedPhase) % this.phasesPerCycle + this.phasesPerCycle) % this.phasesPerCycle
-    const activeEventIndex = this.events.findIndex(event =>
-      event.down <= currentLoopTime && currentLoopTime < event.up
-    )
-
-    if (activeEventIndex >= 0) {
-      const activeEvent = this.events[activeEventIndex]!
-      this.outputIsDown = true
-      this.nextUpIndex = activeEventIndex
-      this.upIteration = 0
-      this.onOn(activeEvent.velocity)
-
-      const nextDown = this.findNextDownPointer(currentLoopTime)
-      this.nextDownIndex = nextDown.index
-      this.downIteration = nextDown.iteration
-      return
-    }
-
-    const nextDown = this.findNextDownPointer(currentLoopTime)
-    this.nextDownIndex = nextDown.index
-    this.downIteration = nextDown.iteration
-    this.nextUpIndex = nextDown.index
-    this.upIteration = nextDown.iteration
-  }
-
-  private findNextDownPointer(currentLoopTime: number) {
-    const epsilon = 1e-9
-    const nextIndex = this.events.findIndex(event => event.down > currentLoopTime + epsilon)
-    if (nextIndex >= 0) {
-      return { index: nextIndex, iteration: 0 }
-    }
-    return { index: 0, iteration: 1 }
-  }
-
-  private scheduleNextPlaybackEvent() {
+  private tickPlayback(unwrappedPhase: number) {
     if (!this.isPlaying || this.events.length === 0) return
 
-    const token = this.schedulerToken
-    const nextEventPhase = Math.min(this.getNextUpPhase(), this.getNextDownPhase())
-    this.queue.whenPhase(nextEventPhase, (msUntil) => {
-      setTimeout(() => {
-        if (token !== this.schedulerToken) return
-        this.consumePlaybackEventsAt(nextEventPhase)
-      }, msUntil)
-    })
-  }
+    const currentInCycle = ((unwrappedPhase % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
 
-  private consumePlaybackEventsAt(targetPhase: number) {
-    while (true) {
-      const nextUpPhase = this.getNextUpPhase()
-      const nextDownPhase = this.getNextDownPhase()
-      const nextPhase = Math.min(nextUpPhase, nextDownPhase)
-
-      if (!Number.isFinite(nextPhase) || Math.abs(nextPhase - targetPhase) > 1e-9) {
-        break
-      }
-
-      if (nextUpPhase <= nextDownPhase) {
-        if (this.outputIsDown) {
-          this.onOff()
-          this.outputIsDown = false
-        }
-        this.advanceUpPointer()
-      } else {
-        const event = this.events[this.nextDownIndex]
-        if (event) {
-          this.onOn(event.velocity)
+    if (this.lastPhaseInCycle === null) {
+      // First tick after playback start or clock switch — initialize without firing
+      this.lastPhaseInCycle = currentInCycle
+      // Sync output state: are we currently inside an active event?
+      for (const event of this.events) {
+        const inside = event.down <= event.up
+          ? currentInCycle >= event.down && currentInCycle < event.up
+          : currentInCycle >= event.down || currentInCycle < event.up
+        if (inside && !this.outputIsDown) {
           this.outputIsDown = true
+          this.onOn(event.velocity)
+          break
         }
-        this.advanceDownPointer()
+      }
+      return
+    }
+
+    const last = this.lastPhaseInCycle
+    this.lastPhaseInCycle = currentInCycle
+    const wrapped = currentInCycle < last
+
+    type PendingFire = { sortKey: number; type: 'on' | 'off'; velocity: number }
+    const toFire: PendingFire[] = []
+
+    // Sort key: temporal order within this tick (first-half-of-wrap before second-half)
+    const sortKey = (t: number) =>
+      wrapped && t <= last ? this.phasesPerCycle - last + t : t - last
+
+    for (const event of this.events) {
+      if (phaseCrossed(event.down, last, currentInCycle)) {
+        toFire.push({ sortKey: sortKey(event.down), type: 'on', velocity: event.velocity })
+      }
+      if (phaseCrossed(event.up, last, currentInCycle)) {
+        toFire.push({ sortKey: sortKey(event.up), type: 'off', velocity: 0 })
       }
     }
 
-    this.scheduleNextPlaybackEvent()
-  }
+    toFire.sort((a, b) => a.sortKey - b.sortKey)
 
-  private getNextDownPhase(): number {
-    const event = this.events[this.nextDownIndex]
-    if (!event) return Number.POSITIVE_INFINITY
-    return this.playbackStartUnwrappedPhase + event.down + this.downIteration * this.phasesPerCycle
-  }
-
-  private getNextUpPhase(): number {
-    const event = this.events[this.nextUpIndex]
-    if (!event) return Number.POSITIVE_INFINITY
-    return this.playbackStartUnwrappedPhase + event.up + this.upIteration * this.phasesPerCycle
-  }
-
-  private advanceDownPointer() {
-    this.nextDownIndex += 1
-    if (this.nextDownIndex >= this.events.length) {
-      this.nextDownIndex = 0
-      this.downIteration += 1
-    }
-  }
-
-  private advanceUpPointer() {
-    this.nextUpIndex += 1
-    if (this.nextUpIndex >= this.events.length) {
-      this.nextUpIndex = 0
-      this.upIteration += 1
+    for (const ev of toFire) {
+      if (ev.type === 'on' && !this.outputIsDown) {
+        this.outputIsDown = true
+        this.onOn(ev.velocity)
+      } else if (ev.type === 'off' && this.outputIsDown) {
+        this.outputIsDown = false
+        this.onOff()
+      }
     }
   }
 }

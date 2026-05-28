@@ -13,6 +13,7 @@ export class Update extends Base.Update {
   constructor(
     public pressed: boolean,
     public velocity: number = 0,
+    public value: number = 0,
   ) {
     super();
   }
@@ -22,13 +23,14 @@ export class State extends Base.State {
   constructor(
     public pressed: boolean = false,
     public velocity: number = 0,
+    public value: number = 0,
   ) {
     super();
   }
 }
 
 export class Spec extends Base.Spec {
-  static type = 'pad' as const 
+  static type = 'pad' as const
   public type = Spec.type
 
   constructor(
@@ -45,7 +47,8 @@ export class Spec extends Base.Spec {
 export class Receiver extends Base.Receiver {
   public pressed = false;
   public velocity = 0;
-  
+  public value = 0;
+
   constructor(
     public spec: Spec,
     public onPress?: (velocity: number) => void,
@@ -54,14 +57,20 @@ export class Receiver extends Base.Receiver {
     super();
     this.pressed = spec.initialState.pressed;
     this.velocity = spec.initialState.velocity;
+    this.value = spec.initialState.value;
+  }
+
+  sendValue(value: number): void {
+    this.value = value;
+    this.onUpdate(new Update(this.pressed, this.velocity, this.value));
   }
 
   handleSignal(payload: Signal): void {
     if (payload.pressed) {
       this.velocity = payload.velocity || 1.0;
-      if (!this.pressed ) {
+      if (!this.pressed) {
         this.pressed = true;
-        if(this.onPress) {
+        if (this.onPress) {
           this.onPress(this.velocity);
         }
       }
@@ -69,21 +78,22 @@ export class Receiver extends Base.Receiver {
       if (this.pressed) {
         this.pressed = false;
         this.velocity = 0;
-        if(this.onRelease) {
+        if (this.onRelease) {
           this.onRelease();
         }
       }
     }
-    this.onUpdate(new Update(this.pressed, this.velocity));
+    this.onUpdate(new Update(this.pressed, this.velocity, this.value));
   }
 
   getState(): State {
-    return new State(this.pressed, this.velocity);
+    return new State(this.pressed, this.velocity, this.value);
   }
 
   restoreState(state: State): void {
     this.pressed = state.pressed;
     this.velocity = state.velocity;
+    this.value = state.value ?? 0;
     if (this.pressed) {
       this.onPress?.(this.velocity || 1.0);
     } else {
@@ -95,6 +105,7 @@ export class Receiver extends Base.Receiver {
 export class Sender extends Base.Sender {
   pressed: boolean = false
   velocity: number = 0
+  value: number = 0
 
   constructor(
     public spec: Spec,
@@ -115,7 +126,7 @@ export class Sender extends Base.Sender {
   }
 
   getState() {
-    return new State(this.pressed, this.velocity)
+    return new State(this.pressed, this.velocity, this.value)
   }
 
   setState(state: State) {
@@ -129,5 +140,6 @@ export class Sender extends Base.Sender {
   handleUpdate(update: Update) {
     this.pressed = update.pressed
     this.velocity = update.velocity
+    this.value = update.value ?? 0
   }
 }

@@ -1,11 +1,9 @@
 <script setup lang=ts>
 import { computed } from 'vue'
 
-// for color manipulation
 import { shade } from 'polished'
 import { Controls } from 'av-controls'
 
-// vue
 const props = defineProps({
   pad: {
     type: Object as () => Controls.Pad.Sender,
@@ -30,6 +28,11 @@ const basisStyle = computed(() => {
     borderColor: spec.color,
   }
 })
+
+const progressStyle = computed(() => ({
+  width: `${(props.pad.value ?? 0) * 100}%`,
+  backgroundColor: 'rgba(255,255,255,0.35)',
+}))
 
 function touchstart(e: Event) {
   props.pad.onTouch();
@@ -57,6 +60,7 @@ function touchend() {
     @touchend="touchend"
     @mouseup="touchend"
     >
+    <div v-if="(props.pad.value ?? 0) > 0" class="progress" :style="progressStyle" />
   </div>
   <div class="centered-label" >
     {{ props.pad.spec.name }}
@@ -66,4 +70,17 @@ function touchend() {
 <style scoped>
 @import './control-styles.css';
 
+.basis {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 100%;
+  pointer-events: none;
+  transition: width 0.05s linear;
+}
 </style>

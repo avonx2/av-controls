@@ -143,27 +143,26 @@ export function makePhasePatternPadPair(
   onUp = () => {},
   phasesPerCycle = 1
 ) {
-  const pattern = new PhaseTapPattern(
-    phaseClock,
-    (velo) => {
-      onDown(velo)
-    },
-    () => {
-      onUp()
-    },
-    phasesPerCycle
-  )
-
   const halfHeight = height / 2
 
+  const recPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+    new Controls.Base.Args(name + ' rec', x, y, width, halfHeight, color)
+  ))
+
+  const pattern = new PhaseTapPattern(
+    phaseClock,
+    (velo) => { onDown(velo) },
+    () => { onUp() },
+    phasesPerCycle,
+    70,
+    (progress) => { recPad.sendValue(progress) }
+  )
+
+  recPad.onPress = (velo: number) => { pattern.tap(velo) }
+  recPad.onRelease = () => { pattern.release() }
+
   return {
-    [name + ' rec']: new Controls.Pad.Receiver(new Controls.Pad.Spec(
-      new Controls.Base.Args(name + ' rec', x, y, width, halfHeight, color)
-    ), (velo: number) => {
-      pattern.tap(velo)
-    }, () => {
-      pattern.release()
-    }),
+    [name + ' rec']: recPad,
     [name + ' manual']: new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args(name + ' manual', x, y + halfHeight, width, halfHeight, color)
     ), (velo: number) => {
