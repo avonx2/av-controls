@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc && cp src/linear-solver.js src/linear-solver.d.ts dist/",
+    "build": "rm -rf dist && tsc && cp src/linear-solver.js src/linear-solver.d.ts dist/",
     "build:watch": "tsc -w",
     "prepublishOnly": "npm run build"
   },

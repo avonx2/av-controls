@@ -29,7 +29,7 @@
     "access": "public"
   },
   "bin": {
-    "av-controls-timeline": "./bin/serve.mjs"
+    "av-controls-timeline": "bin/serve.mjs"
   },
   "files": [
     "dist",
