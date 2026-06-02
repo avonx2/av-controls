@@ -1,6 +1,6 @@
 {
   "name": "av-controls",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "this is a protocol for passing audio visual control signals between tabs",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,5 +17,8 @@
   },
   "devDependencies": {
     "typescript": "^5.9.2"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

@@ -1,25 +1,35 @@
 {
   "name": "av-controls-server",
-  "version": "1.0.0",
-  "main": "src/server.js",
+  "version": "1.0.1",
+  "description": "WebSocket broker for the av-controls protocol (relays control panels between artworks and controllers).",
+  "license": "MIT",
+  "author": "felix niemeyer",
+  "type": "commonjs",
+  "main": "./dist/server.cjs",
+  "bin": {
+    "av-controls-server": "./dist/server.cjs"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node ../../scripts/check-workspace-deps.mjs && nodemon"
+    "start": "node ../../scripts/check-workspace-deps.mjs && nodemon",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node18 --packages=external --outfile=dist/server.cjs --banner:js=\"#!/usr/bin/env node\"",
+    "prepublishOnly": "npm run build"
   },
-  "author": "felix niemeyer",
-  "license": "UNLICENSED",
-  "description": "",
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^22.13.5",
+    "@types/ws": "^8.5.14",
+    "esbuild": "^0.28.0",
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@types/express": "^5.0.0",
-    "@types/ws": "^8.5.14",
-    "av-controls": "^0.5.1",
+    "av-controls": "^0.5.2",
     "express": "^4.21.2",
     "ws": "^8.18.1"
   }

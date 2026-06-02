@@ -76,8 +76,8 @@ export class SwitchablePhaseClock implements PhaseClock {
   }
 
   tickAll(deltaS?: number, now?: number): void {
-    this.autoClock.tick(deltaS, now)
-    this.tapClock.tick(deltaS, now)
+    this.autoClock.tick(deltaS)
+    this.tapClock.tick(deltaS)
   }
 
   getPhase(): number {

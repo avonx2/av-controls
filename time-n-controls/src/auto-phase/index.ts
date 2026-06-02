@@ -495,6 +495,12 @@ export class AutoPhase implements PhaseClock {
     return this.phaseClock.getSeconds()
   }
 
+  getAbsoluteTime(): number {
+    // AutoPhase has no external time anchor; report accumulated elapsed time
+    // (the TimeClock.getAbsoluteTime contract's documented fallback).
+    return this.phaseClock.getSeconds()
+  }
+
   getTickDeltaS(): number {
     return this.phaseClock.getTickDeltaS()
   }

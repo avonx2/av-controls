@@ -1,6 +1,6 @@
 {
   "name": "time-n-controls",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "a clock and some high level controls for av-controls and visual artworks",
   "main": "./dist/lib.js",
   "types": "./dist/lib.d.ts",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc",
+    "build": "tsc && cp src/linear-solver.js src/linear-solver.d.ts dist/",
     "build:watch": "tsc -w"
   },
   "author": "felix niemeyer",
@@ -19,7 +19,10 @@
     "typescript": "^5.5.4"
   },
   "dependencies": {
-    "av-controls": "^0.5.0",
+    "av-controls": "^0.5.1",
     "onnxruntime-web": "^1.17.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }
