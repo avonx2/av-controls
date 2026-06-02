@@ -1,13 +1,13 @@
-import { Controls, InputSource, MidiSource as ProtocolMidiSource, KeyboardSource, InputSignal } from 'av-controls'
-import { Errors } from 'av-controls';
+import { Controls, InputSource, MidiSource as ProtocolMidiSource, KeyboardSource, InputSignal } from '@av-controls/protocol'
+import { Errors } from '@av-controls/protocol';
 const { Logger } = Errors;
 
 // Import WebMidi and its types
 import { WebMidi, Input } from 'webmidi';
 
 // Re-export source and signal types from protocol
-export type { InputSource, KeyboardSource } from 'av-controls'
-export { MidiSource as ProtocolMidiSource, InputSignal } from 'av-controls'
+export type { InputSource, KeyboardSource } from '@av-controls/protocol'
+export { MidiSource as ProtocolMidiSource, InputSignal } from '@av-controls/protocol'
 
 // Legacy MIDI source interface for backward compatibility
 export interface MidiSource {

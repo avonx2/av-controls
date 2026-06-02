@@ -1,5 +1,5 @@
 {
-  "name": "av-controls-server",
+  "name": "@av-controls/broker",
   "version": "1.0.1",
   "description": "WebSocket broker for the av-controls protocol (relays control panels between artworks and controllers).",
   "license": "MIT",
@@ -7,7 +7,7 @@
   "type": "commonjs",
   "main": "./dist/server.cjs",
   "bin": {
-    "av-controls-server": "./dist/server.cjs"
+    "av-controls-broker": "./dist/server.cjs"
   },
   "files": [
     "dist"
@@ -29,8 +29,11 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "av-controls": "^0.5.2",
+    "@av-controls/protocol": "^0.5.2",
     "express": "^4.21.2",
     "ws": "^8.18.1"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,4 +1,4 @@
-import { Controls, Messages } from 'av-controls';
+import { Controls, Messages } from '@av-controls/protocol';
 import { getPlaybackLaneSampleBuffer } from './curve';
 import { getStepLaneValueBuffer, getTriggerLaneValueBuffer } from './discrete';
 import { getTimelineAdapter, sortTimelineKeyframes } from './adapters';

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
-import { Artwork, Controls } from 'av-controls'
+import { Artwork, Controls } from '@av-controls/protocol'
 import * as Timeline from './engine'
 import {
   listProjects,

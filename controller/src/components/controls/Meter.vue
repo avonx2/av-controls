@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { shade, transparentize } from 'polished'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 const props = defineProps({
   meter: {

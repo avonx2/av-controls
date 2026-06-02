@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { mix, transparentize } from 'polished'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 const props = defineProps({
   lamp: {

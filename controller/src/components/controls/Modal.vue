@@ -1,7 +1,7 @@
 <script setup lang=ts>
 import { computed, inject } from 'vue'
 import { shade } from 'polished'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 // vue
 const props = defineProps({

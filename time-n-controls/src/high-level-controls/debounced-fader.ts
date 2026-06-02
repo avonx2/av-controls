@@ -1,4 +1,4 @@
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 export class DebouncedFader {
   private fader: Controls.Fader.Receiver

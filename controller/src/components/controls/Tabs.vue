@@ -1,7 +1,7 @@
 <script setup lang=ts>
 import { computed } from 'vue'
 
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 import { shade } from 'polished';
 
 import Control from './Control.vue'

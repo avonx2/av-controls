@@ -1,4 +1,4 @@
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 import { PhaseClock } from '../phase-clock'
 import { OffPhaseClock } from './off-phase-clock'
 import { ConstantPhaseClock } from './constant-phase-clock'

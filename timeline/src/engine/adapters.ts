@@ -1,4 +1,4 @@
-import { Controls } from 'av-controls';
+import { Controls } from '@av-controls/protocol';
 import type { TimelineKeyframe, TimelineLane } from './types';
 
 type Quaternion = [number, number, number, number];

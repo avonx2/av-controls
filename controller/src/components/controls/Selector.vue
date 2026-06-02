@@ -4,7 +4,7 @@ import { computed, ref, type Ref  } from 'vue'
 
 // for color manipulation
 import { lighten, shade } from 'polished'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 
 // vue

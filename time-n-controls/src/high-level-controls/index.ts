@@ -1,4 +1,4 @@
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 import { PhaseClock } from '../phase-clock'
 import { PhaseTapPattern } from '../phase-tap-pattern'

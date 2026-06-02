@@ -1,6 +1,6 @@
-import type { Controls } from 'av-controls'
+import type { Controls } from '@av-controls/protocol'
 
-const DB_NAME = 'av-controls'
+const DB_NAME = '@av-controls/protocol'
 const STORE_NAME = 'controller-visual-state'
 const DB_VERSION = 2
 const debounceMs = 400

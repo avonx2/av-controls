@@ -10,7 +10,7 @@ import {
 } from '../input-mappings'
 
 import type { InputSource } from '../input-mappings'
-import { KeyboardSource, MidiSource as ProtocolMidiSource } from 'av-controls'
+import { KeyboardSource, MidiSource as ProtocolMidiSource } from '@av-controls/protocol'
 
 const windowSize = 10000
 let lastCleanup = 0

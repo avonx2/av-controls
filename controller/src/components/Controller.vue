@@ -7,7 +7,7 @@ import {
   Controls,
   Transports,
   ControllerClient as ProtocolControllerClient,
-} from 'av-controls'
+} from '@av-controls/protocol'
 
 import { loadTabState, applyTabState, watchTabChanges } from '../tab-state-persistence'
 import {

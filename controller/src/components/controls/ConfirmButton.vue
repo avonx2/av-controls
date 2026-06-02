@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 
 // vue

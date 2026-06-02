@@ -3,7 +3,7 @@ import { computed } from 'vue'
 
 // for color manipulation
 import { shade, transparentize } from 'polished'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 // vue
 const props = defineProps({

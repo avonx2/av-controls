@@ -1,5 +1,5 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import { Artwork, Messages, Transports, Controls } from 'av-controls'
+import { Artwork, Messages, Transports, Controls } from '@av-controls/protocol'
 import * as Timeline from './engine'
 import { loadProject, saveProject, sanitizeTimelineStateForPersistence, type StoredAudioTrack, type StoredProject } from './storage'
 

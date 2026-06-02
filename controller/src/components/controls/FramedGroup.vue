@@ -3,7 +3,7 @@ import { computed } from 'vue'
 
 import Area from './Area.vue'
 
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 import { shade } from 'polished';
 
 // vue

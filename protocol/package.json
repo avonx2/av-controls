@@ -1,5 +1,5 @@
 {
-  "name": "av-controls",
+  "name": "@av-controls/protocol",
   "version": "0.5.2",
   "description": "this is a protocol for passing audio visual control signals between tabs",
   "main": "./dist/index.js",
@@ -13,12 +13,16 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc",
-    "build:watch": "tsc -w"
+    "build:watch": "tsc -w",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "typescript": "^5.9.2"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

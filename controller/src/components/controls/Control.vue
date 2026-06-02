@@ -2,7 +2,7 @@
 
 import { ref, computed, inject, onMounted, onBeforeUnmount, watch, type Ref } from 'vue'
 
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 import type { InputMappings } from '../../input-mappings'
 
 import FaderComponent from './Fader.vue'

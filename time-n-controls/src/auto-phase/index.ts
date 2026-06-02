@@ -1,5 +1,5 @@
 import * as ort from 'onnxruntime-web'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 import { MelFrontend, MelFrontendConfig } from './mel-frontend'
 import { AutoPhaseClock } from './phase-clock'
 import { PhaseClock } from '../phase-clock'

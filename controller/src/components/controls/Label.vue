@@ -3,7 +3,7 @@ import { computed } from 'vue'
 
 
 // for color manipulation
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 
 // vue

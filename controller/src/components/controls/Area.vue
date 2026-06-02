@@ -1,5 +1,5 @@
 <script setup lang=ts>
-import { type SendersDict } from 'av-controls'
+import { type SendersDict } from '@av-controls/protocol'
 import ControlComponent from './Control.vue'
 
 // vue

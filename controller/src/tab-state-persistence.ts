@@ -1,4 +1,4 @@
-import type { Controls } from 'av-controls'
+import type { Controls } from '@av-controls/protocol'
 
 const DB_NAME = 'avonx-controller'
 const DB_VERSION = 1

@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 import { shade } from 'polished'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 const props = defineProps({
   pad: {

@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { Transports, Messages } from 'av-controls';
+import { Transports, Messages } from '@av-controls/protocol';
 type RootSpecification = Messages.RootSpecification;
 const {
   ControlStateRestore,

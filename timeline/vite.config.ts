@@ -14,15 +14,15 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      'av-controls': path.join(path.dirname(require.resolve('av-controls/package.json')), 'src/index.ts')
+      '@av-controls/protocol': path.join(path.dirname(require.resolve('@av-controls/protocol/package.json')), 'src/index.ts')
     }
   },
   optimizeDeps: {
-    exclude: ['av-controls']
+    exclude: ['@av-controls/protocol']
   },
   server: {
     watch: {
-      ignored: ['!**/node_modules/av-controls/**']
+      ignored: ['!**/node_modules/@av-controls/protocol/**']
     }, 
     port: 5175
   }

@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 
 
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 import { shade } from 'polished';
 

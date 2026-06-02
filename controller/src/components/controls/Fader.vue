@@ -1,6 +1,6 @@
 <script setup lang=ts>
 import { computed, onBeforeUnmount, ref  } from 'vue'
-import { Controls } from 'av-controls'
+import { Controls } from '@av-controls/protocol'
 
 // for color manipulation
 import { shade } from 'polished'
