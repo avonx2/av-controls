@@ -1,0 +1,81 @@
+/* Global base styles for the STANDALONE controller only (imported from
+ * standalone.ts, never from main.ts). When the controller is embedded as a
+ * component, the host app provides these globals; standalone it doesn't, so we
+ * lift the bits the controller relies on (monospace, dark bg, border-box,
+ * input/button/scrollbar resets) from the platform's base.css. */
+
+:root {
+  --primary-rgb: 153, 255, 255;
+  --primary-color: rgb(var(--primary-rgb));
+  --secondary-rgb: 255, 153, 255;
+  --secondary-color: rgb(var(--secondary-rgb));
+  --tertiary-rgb: 153, 153, 255;
+  --tertiary-color: rgb(var(--tertiary-rgb));
+  --background-color: #111;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  font-weight: normal;
+  font-family: monospace;
+  text-rendering: optimizeLegibility;
+  user-select: none;
+}
+
+html,
+body {
+  min-height: 100vh;
+  color: #fffd;
+  background-color: var(--background-color);
+  margin: 0;
+  overflow-x: hidden;
+}
+
+input,
+textarea {
+  background-color: #0005;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0.5rem;
+  color: #fffb;
+}
+
+input:focus {
+  outline: none;
+  border-color: #eee;
+}
+
+button {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border: none;
+  cursor: pointer;
+  background-color: #fff2;
+  color: #fffd;
+}
+button:hover {
+  background-color: #fff4;
+}
+
+/* Slim scrollbars (WebKit + Firefox) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #fff2;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(85, 85, 85, 0.7);
+}
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(136, 136, 136, 0.7) transparent;
+}
