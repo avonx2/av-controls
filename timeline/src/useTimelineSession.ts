@@ -39,6 +39,7 @@ function stateHasTimelineData(state: Timeline.TimelineState) {
       if (lane.type === 'keyframes') return lane.keyframes.length > 0
       if (lane.type === 'trigger') return lane.triggers.length > 0
       if (lane.type === 'step') return lane.points.length > 0
+      if (lane.type === 'event') return lane.events.length > 0 || (lane.renderEvents?.length ?? 0) > 0
       return lane.points.length > 0 || (lane.renderPoints?.length ?? 0) > 0
     }),
   )
@@ -147,12 +148,16 @@ export function useTimelineSession(options: TimelineSessionOptions) {
             ? nextLane.renderKeyframes !== undefined
             : nextLane.type === 'trigger'
             ? nextLane.renderTriggers !== undefined
+            : nextLane.type === 'event'
+            ? nextLane.renderEvents !== undefined
             : nextLane.renderPoints !== undefined
           : false
         const hasCurrentRenderLane = lane.type === 'keyframes'
           ? lane.renderKeyframes !== undefined
           : lane.type === 'trigger'
           ? lane.renderTriggers !== undefined
+          : lane.type === 'event'
+          ? lane.renderEvents !== undefined
           : lane.renderPoints !== undefined
         if (hasCurrentRenderLane && !hasNextRenderLane) {
           timelineClient.value.removeRenderLane(control.path, lane.key)
@@ -169,6 +174,8 @@ export function useTimelineSession(options: TimelineSessionOptions) {
           timelineClient.value.setLaneKeyframes(control.path, lane.key, lane.keyframes ?? [])
         } else if (lane.type === 'trigger') {
           timelineClient.value.setLaneTriggers(control.path, lane.key, lane.triggers ?? [])
+        } else if (lane.type === 'event') {
+          timelineClient.value.setLaneEvents(control.path, lane.key, lane.events ?? [])
         } else {
           timelineClient.value.setLanePoints(control.path, lane.key, lane.points ?? [])
         }
@@ -178,7 +185,10 @@ export function useTimelineSession(options: TimelineSessionOptions) {
         } else if (lane.type === 'trigger' && lane.renderTriggers !== undefined) {
           timelineClient.value.addRenderLane(control.path, lane.key)
           timelineClient.value.setRenderLaneTriggers(control.path, lane.key, lane.renderTriggers ?? [])
-        } else if (lane.type !== 'keyframes' && lane.type !== 'trigger' && lane.renderPoints !== undefined) {
+        } else if (lane.type === 'event' && lane.renderEvents !== undefined) {
+          timelineClient.value.addRenderLane(control.path, lane.key)
+          timelineClient.value.setRenderLaneEvents(control.path, lane.key, lane.renderEvents ?? [])
+        } else if (lane.type !== 'keyframes' && lane.type !== 'trigger' && lane.type !== 'event' && lane.renderPoints !== undefined) {
           timelineClient.value.addRenderLane(control.path, lane.key)
           timelineClient.value.setRenderLanePoints(control.path, lane.key, lane.renderPoints ?? [])
         }
@@ -339,14 +349,14 @@ export function useTimelineSession(options: TimelineSessionOptions) {
           }
         }
       }
-      timelineTime.value = effectiveState.time
-      playing.value = effectiveState.playing
       alwaysRender.value = effectiveState.alwaysRender
       loopEnabled.value = effectiveState.loopEnabled
       loopDurationSec.value = effectiveState.loopDurationSec
       timelineStateRaw.value = effectiveState
       timelineState.value = options.normalizeProjectState(effectiveState)
       if (options.shouldUpdateClock()) {
+        timelineTime.value = effectiveState.time
+        playing.value = effectiveState.playing
         lastStateTime.value = effectiveState.time
         lastStateAt.value = performance.now()
         if (timelinePlayLog) {

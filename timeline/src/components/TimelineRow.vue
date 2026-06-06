@@ -173,6 +173,14 @@ const props = defineProps({
     type: Function as PropType<(event: MouseEvent, rowId: string) => void>,
     required: true,
   },
+  collapsedLanes: {
+    type: Object as PropType<Record<string, boolean>>,
+    required: true,
+  },
+  toggleLaneCollapse: {
+    type: Function as PropType<(rowId: string, laneKey: string) => void>,
+    required: true,
+  },
 })
 
 </script>
@@ -228,6 +236,8 @@ const props = defineProps({
       :on-render-lane-keyframes-update="onRenderLaneKeyframesUpdate"
       :on-render-lane-events-update="onRenderLaneEventsUpdate"
       :start-row-resize="startRowResize"
+      :collapsed-lanes="collapsedLanes"
+      :toggle-lane-collapse="toggleLaneCollapse"
     />
   </div>
   <div

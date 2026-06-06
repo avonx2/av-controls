@@ -15,4 +15,6 @@ export type {
   TimelinePoint,
   TimelineKeyframe,
   TimelineStateKind,
+  TimelineEventLane,
+  TimelineEventPoint,
 } from './types';

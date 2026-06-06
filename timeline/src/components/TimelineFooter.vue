@@ -26,6 +26,7 @@ const emit = defineEmits<{
   'update:fps': [value: number]
   'update:loopFromSec': [value: number]
   'update:loopToSec': [value: number]
+  seekTime: [value: number]
 }>()
 
 const displayedTime = ref(0)
@@ -35,6 +36,15 @@ function syncDisplayedTime() {
   displayedTime.value = (props.playing && !props.rendering)
     ? Math.max(0, props.lastStateTime + (performance.now() - props.lastStateAt) / 1000)
     : props.lastStateTime
+}
+
+function onTimeInputChange(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (!Number.isNaN(value) && Number.isFinite(value) && value >= 0) {
+    emit('seekTime', value)
+  } else {
+    syncDisplayedTime()
+  }
 }
 
 watch(
@@ -74,9 +84,9 @@ onBeforeUnmount(() => {
       <button class="footer-btn" @click="emit('togglePlay')">{{ playing ? 'pause:' : 'play:' }}</button>
       <input
         :value="displayedTime.toFixed(2)"
+        @change="onTimeInputChange"
         class="footer-input"
         type="text"
-        readonly
       />
     </div>
     <div class="footer-duration">

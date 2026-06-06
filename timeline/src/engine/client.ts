@@ -12,6 +12,8 @@ import type {
   TimelinePoint,
   TimelineTrigger,
   TimelineStateKind,
+  TimelineEventLane,
+  TimelineEventPoint,
 } from './index';
 
 type Message = Messages.Message;
@@ -34,7 +36,7 @@ type ControlIndexEntry = {
 type PendingAutomationSignal = {
   path: ControlPath;
   key: string;
-  kind: 'curve' | 'step' | 'trigger' | 'keyframes';
+  kind: 'curve' | 'step' | 'trigger' | 'keyframes' | 'event';
   leaf: Controls.Base.Signal;
   values?: Record<string, number>;
   signature: string;
@@ -567,7 +569,7 @@ export class TimelineClient {
   setLanePoints(path: string[], laneKey: string, points: TimelinePoint[]) {
     const seq = this.nextSeq();
     const lane = this.ensureControlState(path).lanes.find(candidate => candidate.key === laneKey);
-    if (lane && lane.type !== 'keyframes' && lane.type !== 'trigger') {
+    if (lane && (lane.type === 'curve' || lane.type === 'step')) {
       lane.points = ensureSorted(points);
       lane.seq = seq;
       this.emitEdit(seq);

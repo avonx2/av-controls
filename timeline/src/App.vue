@@ -161,6 +161,12 @@ const controlManualOverride = reactive<Record<string, boolean>>({})
 const latestControlValues: Record<string, Record<string, number>> = {}
 const latestControlPayloads: Record<string, unknown> = {}
 const laneClearConfirm = reactive<Record<string, boolean>>({})
+const collapsedLanes = reactive<Record<string, boolean>>({})
+
+function toggleLaneCollapse(rowId: string, laneKey: string) {
+  const actionId = `${rowId}:${laneKey}`
+  collapsedLanes[actionId] = !collapsedLanes[actionId]
+}
 
 // Render dialog state
 const showRenderDialog = ref(false)
@@ -1233,11 +1239,13 @@ function startRenderLivePlayback(startTime: number) {
     timelineState.value.controls.forEach(c => {
       c.lanes.forEach(l => {
         if (l.type === 'keyframes') {
-          l.keyframes.forEach(k => { if (k.time > endTime) endTime = k.time })
+          l.keyframes.forEach(k => { if (k.t > endTime) endTime = k.t })
         } else if (l.type === 'trigger') {
-          l.triggers.forEach(t => { if (t.time > endTime) endTime = t.time })
-        } else if (l.points) {
-          l.points.forEach(p => { if (p.time > endTime) endTime = p.time })
+          l.triggers.forEach(t => { if (t.on.t > endTime) endTime = t.on.t })
+        } else if (l.type === 'event') {
+          l.events.forEach(e => { if (e.t > endTime) endTime = e.t })
+        } else if (l.type === 'curve' || l.type === 'step') {
+          l.points.forEach(p => { if (p.t > endTime) endTime = p.t })
         }
       })
     })
@@ -2120,8 +2128,8 @@ function recordManualOverrideKeyframe(rowId: string) {
         })
       }
     } else {
-      const nextPoints = upsertLanePoint(lane && lane.type !== 'keyframes' && lane.type !== 'trigger' ? lane.points : [], displayTime.value, nextValue)
-      if (lane && lane.type !== 'keyframes') {
+      const nextPoints = upsertLanePoint(lane && (lane.type === 'curve' || lane.type === 'step') ? lane.points : [], displayTime.value, nextValue)
+      if (lane && (lane.type === 'curve' || lane.type === 'step')) {
         timelineClient.value.setLanePoints(path, laneKey, nextPoints)
       } else {
         timelineClient.value.addLane(path, {
@@ -2486,6 +2494,10 @@ const rightmostTime = computed(() => {
         for (const trigger of lane.triggers) {
           if (trigger.off.t > maxT) maxT = trigger.off.t
         }
+      } else if (lane.type === 'event') {
+        for (const event of lane.events) {
+          if (event.t > maxT) maxT = event.t
+        }
       } else {
         for (const point of lane.points) {
           if (point.t > maxT) maxT = point.t
@@ -2800,10 +2812,10 @@ function onClearLaneClick(rowId: string, lane: RenderLane) {
   }
 
   clearLaneConfirm(rowId, lane.key)
+  const storedLane = getStoredEditableLane(rowId, lane.key, lane.kind)
   clearLaneInState(timelineStateRaw.value, rowId, lane.key, lane.kind)
   clearLaneInState(timelineState.value, rowId, lane.key, lane.kind)
   if (!timelineClient.value) return
-  const storedLane = getStoredEditableLane(rowId, lane.key, lane.kind)
   timelineClient.value.removeLane(getRowPath(rowId), storedLane?.key ?? lane.key)
   if (lane.kind === 'keyframes') {
     return
@@ -3180,10 +3192,6 @@ function getStoredEditableLane(rowId: string, laneKey: string, laneKind?: Render
   const exact = lanes.find(lane => lane.key === laneKey) ?? null
   if (exact) return exact
 
-  if (laneKind === 'trigger') {
-    return lanes.find(lane => lane.type !== 'keyframes') ?? null
-  }
-
   return null
 }
 
@@ -3196,6 +3204,7 @@ function hasRenderLane(rowId: string, laneKey: string) {
     if (lane.key !== laneKey) return false
     if (lane.type === 'keyframes') return lane.renderKeyframes !== undefined
     if (lane.type === 'trigger') return lane.renderTriggers !== undefined
+    if (lane.type === 'event') return lane.renderEvents !== undefined
     return lane.renderPoints !== undefined
   })
 }
@@ -3261,6 +3270,16 @@ function normalizeLaneForRow(rowId: string, lane: Timeline.TimelineLane): Timeli
       key: getExpectedLaneKeyForSpec(spec),
       triggers: [...lane.triggers].sort((a, b) => a.on.t - b.on.t),
       renderTriggers: lane.renderTriggers ? [...lane.renderTriggers].sort((a, b) => a.on.t - b.on.t) : undefined,
+    }
+  }
+  if (lane.type === 'event') {
+    return {
+      type: 'trigger',
+      key: getExpectedLaneKeyForSpec(spec),
+      enabled: lane.enabled,
+      triggers: [],
+      seq: lane.seq,
+      renderSeq: lane.renderSeq,
     }
   }
   return {
@@ -4043,6 +4062,8 @@ watch(artworkClient, (client) => {
         :on-audio-upload="onAudioUpload"
         :on-audio-hover-time="onAudioHoverTime"
         :toggle-audio-marker="toggleAudioMarker"
+        :collapsed-lanes="collapsedLanes"
+        :toggle-lane-collapse="toggleLaneCollapse"
       />
       <TimelineFooter
         :last-state-time="lastStateTime"
@@ -4066,6 +4087,7 @@ watch(artworkClient, (client) => {
         @update:fps="fps = $event"
         @update:loop-from-sec="updateLoopFrom"
         @update:loop-to-sec="updateLoopTo"
+        @seek-time="seekToTime"
       />
     </section>
 

@@ -130,32 +130,48 @@ const props = defineProps({
     type: Function as PropType<(event: MouseEvent, rowId: string) => void>,
     required: true,
   },
+  collapsedLanes: {
+    type: Object as PropType<Record<string, boolean>>,
+    required: true,
+  },
+  toggleLaneCollapse: {
+    type: Function as PropType<(rowId: string, laneKey: string) => void>,
+    required: true,
+  },
 })
 
-const expandedPaneCount = computed(() => {
-  if (props.rowDisplay?.collapsed) return Math.max(1, (props.rowDisplay?.displayedLanes ?? []).length)
-  return Math.max(
-    1,
-    (props.rowDisplay?.displayedLanes ?? []).reduce((count: number, lane: any) => {
-      if (lane.kind === 'absent') return count + 1
-      return count + 1 + (lane.renderLane ? 1 : 0)
-    }, 0),
-  )
-})
-
-const expandedPaneHeight = computed(() => {
+function getPaneHeight(lane: any) {
   if (props.rowDisplay?.collapsed) {
     return props.rowDisplay?.collapsedLaneHeight ?? props.collapsedRowHeight
   }
+  const actionId = props.getLaneActionId(props.row.id, lane.key)
+  if (props.collapsedLanes[actionId]) {
+    return 28
+  }
   const totalHeight = props.rowDisplay?.height ?? props.expandedRowHeight
-  const paneCount = Math.max(1, expandedPaneCount.value)
+  const displayedLanes = props.rowDisplay?.displayedLanes ?? []
+  let collapsedCount = 0
+  let expandedCount = 0
+  for (const l of displayedLanes) {
+    if (l.kind === 'absent') {
+      expandedCount++
+    } else {
+      const aId = props.getLaneActionId(props.row.id, l.key)
+      if (props.collapsedLanes[aId]) {
+        collapsedCount++
+      } else {
+        expandedCount++
+        if (l.renderLane) {
+          expandedCount++
+        }
+      }
+    }
+  }
   const gapPx = 6
-  const availableHeight = totalHeight - Math.max(0, paneCount - 1) * gapPx
-  return Math.max(28, availableHeight / paneCount)
-})
-
-function getPaneHeight() {
-  return expandedPaneHeight.value
+  const paneCount = collapsedCount + expandedCount
+  const totalGaps = Math.max(0, paneCount - 1) * gapPx
+  const remainingHeight = totalHeight - totalGaps - (collapsedCount * 28)
+  return Math.max(28, remainingHeight / Math.max(1, expandedCount))
 }
 </script>
 
@@ -176,8 +192,8 @@ function getPaneHeight() {
         v-for="lane in rowDisplay?.displayedLanes ?? []"
         :key="lane.key"
         class="lane-block"
-        :class="{ collapsed: rowDisplay?.collapsed }"
-        :style="rowDisplay?.collapsed ? { height: `${rowDisplay?.collapsedLaneHeight ?? collapsedRowHeight}px` } : undefined"
+        :class="{ collapsed: rowDisplay?.collapsed, minimized: collapsedLanes[getLaneActionId(row.id, lane.key)] }"
+        :style="rowDisplay?.collapsed ? { height: `${rowDisplay?.collapsedLaneHeight ?? collapsedRowHeight}px` } : (collapsedLanes[getLaneActionId(row.id, lane.key)] ? { height: '28px', flex: '0 0 auto' } : undefined)"
       >
         <div v-if="!rowDisplay?.collapsed" class="lane-entry-header">
           <button
@@ -187,6 +203,11 @@ function getPaneHeight() {
             @click.stop="onClearLaneClick(row.id, lane)"
             @blur="clearLaneConfirm(row.id, lane.key)"
           >{{ laneClearConfirm[getLaneActionId(row.id, lane.key)] ? 'confirm' : 'clear' }}</button>
+          <button
+            v-if="lane.kind !== 'absent'"
+            class="lane-entry-btn toggle-collapse"
+            @click.stop="toggleLaneCollapse(row.id, lane.key)"
+          >{{ collapsedLanes[getLaneActionId(row.id, lane.key)] ? 'show' : 'hide' }}</button>
           <button
             v-if="lane.kind !== 'absent' && lane.kind !== 'curve' ? !lane.renderLane : lane.kind === 'curve' && !lane.renderLane"
             class="lane-entry-btn"
@@ -198,7 +219,7 @@ function getPaneHeight() {
             @click.stop="removeRenderLane(row.id, lane.key)"
           >x render</button>
         </div>
-        <div class="lane-variant-stack" :class="{ collapsed: rowDisplay?.collapsed }">
+        <div v-if="!collapsedLanes[getLaneActionId(row.id, lane.key)]" class="lane-variant-stack" :class="{ collapsed: rowDisplay?.collapsed }">
           <div class="lane-pane">
             <LaneEnvelope
               v-if="lane.kind === 'curve'"
@@ -206,7 +227,7 @@ function getPaneHeight() {
               :lane-key="lane.key"
               :collapsed="!!rowDisplay?.collapsed"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -221,7 +242,7 @@ function getPaneHeight() {
               :lane="lane.lane"
               :collapsed="!!rowDisplay?.collapsed"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -235,7 +256,7 @@ function getPaneHeight() {
               :lane="lane.lane"
               :collapsed="!!rowDisplay?.collapsed"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -249,7 +270,7 @@ function getPaneHeight() {
               :lane="lane.lane"
               :collapsed="!!rowDisplay?.collapsed"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -262,7 +283,7 @@ function getPaneHeight() {
               :lane="lane.lane"
               :collapsed="!!rowDisplay?.collapsed"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -290,7 +311,7 @@ function getPaneHeight() {
               :lane="lane.renderLane"
               :lane-key="`${lane.key}__render`"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -315,7 +336,7 @@ function getPaneHeight() {
               :lane="lane.renderLane"
               :collapsed="false"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -339,7 +360,7 @@ function getPaneHeight() {
               :lane="lane.renderLane"
               :collapsed="false"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -363,7 +384,7 @@ function getPaneHeight() {
               :lane="lane.renderLane"
               :collapsed="false"
               :manual-override="!!rowDisplay?.manualOverride"
-              :height="getPaneHeight()"
+              :height="getPaneHeight(lane)"
               :width="laneWidthPx"
               :seconds-per-width="secondsPerWidth"
               :time-offset="timeOffset"
@@ -471,6 +492,28 @@ function getPaneHeight() {
 
 .lane-entry-btn.remove {
   background: rgba(82, 118, 132, 0.24);
+}
+
+.lane-entry-btn.clear {
+  color: #ff9d9d;
+  border-color: rgba(255, 157, 157, 0.4);
+  background: rgba(255, 100, 100, 0.12);
+}
+
+.lane-entry-btn.clear:hover {
+  color: #ffb3b3;
+  background: rgba(255, 100, 100, 0.2);
+}
+
+.lane-entry-btn.toggle-collapse {
+  color: #9cdffd;
+  border-color: rgba(156, 223, 253, 0.4);
+  background: rgba(156, 223, 253, 0.12);
+}
+
+.lane-entry-btn.toggle-collapse:hover {
+  color: #bceaff;
+  background: rgba(156, 223, 253, 0.2);
 }
 
 .lane-entry-btn.clear.confirm {
