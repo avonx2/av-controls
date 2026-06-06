@@ -5,6 +5,7 @@
   "workspaces": [
     "controller",
     "protocol",
+    "reconcile-ui",
     "simple-key-sender",
     "time-n-controls",
     "timeline",

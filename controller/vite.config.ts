@@ -20,12 +20,12 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    exclude: ['@av-controls/protocol']
+    exclude: ['@av-controls/protocol', '@av-controls/reconcile-ui']
   },
   server: {
     watch: {
       // Watch npm linked packages for changes
-      ignored: ['!**/node_modules/@av-controls/protocol/**']
+      ignored: ['!**/node_modules/@av-controls/protocol/**', '!**/node_modules/@av-controls/reconcile-ui/**']
     }
   }
 })

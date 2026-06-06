@@ -9,3 +9,4 @@ export * as Artwork from './artwork';
 export * as ControllerClient from './controller-client';
 export * as Transports from './transports';
 export * as Persistence from './persistence';
+export * as Reconcile from './reconcile';

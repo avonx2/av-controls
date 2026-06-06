@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@av-controls/protocol": "^0.5.2",
+    "@av-controls/reconcile-ui": "^0.5.2",
     "pinia": "^3.0.3",
     "polished": "^4.3.1",
     "vue": "^3.5.21",

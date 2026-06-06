@@ -6,8 +6,11 @@ import Area from './controls/Area.vue'
 import {
   Controls,
   Transports,
+  Reconcile,
   ControllerClient as ProtocolControllerClient,
 } from '@av-controls/protocol'
+
+import { ReconcileMatcher } from '@av-controls/reconcile-ui'
 
 import { loadTabState, applyTabState, watchTabChanges } from '../tab-state-persistence'
 import {
@@ -52,6 +55,12 @@ const emits = defineEmits<{
 }>()
 
 const rootSender = ref<Controls.Base.Sender | undefined>()
+
+const reconcileState = ref<{
+  diff: Reconcile.ReconcileDiff
+  suggestion: Reconcile.MatchMap
+  pending: Controls.Base.State
+} | null>(null)
 const initialControlSpecByPath = ref<Map<string, {
   x: number
   y: number
@@ -573,12 +582,36 @@ function importControlValues() {
     try {
       const text = await file.text()
       const state = JSON.parse(text)
-      rootSender.value.setState(state)
+      const specLeaves = Reconcile.walkSenderLeaves(rootSender.value)
+      const fileLeaves = Reconcile.walkStateLeaves(state)
+      const diff = Reconcile.diffPaths(specLeaves, fileLeaves)
+      if (diff.onlyInFile.length === 0) {
+        rootSender.value.setState(state)
+        return
+      }
+      // Some saved values no longer map to a control - let the user match them.
+      reconcileState.value = {
+        diff,
+        suggestion: Reconcile.suggestMatches(diff),
+        pending: state,
+      }
     } catch (error) {
       console.error('Failed to import control values', error)
     }
   }
   input.click()
+}
+
+function applyReconcile(map: Reconcile.MatchMap) {
+  if (reconcileState.value && rootSender.value) {
+    const migrated = Reconcile.remapControlState(reconcileState.value.pending, map)
+    rootSender.value.setState(migrated)
+  }
+  reconcileState.value = null
+}
+
+function cancelReconcile() {
+  reconcileState.value = null
 }
 
 defineExpose({
@@ -735,6 +768,16 @@ defineExpose({
         <button class="layout-report-button" @click="closeControlEditor">cancel</button>
         <button class="layout-report-button" @click="saveControlEditor">save</button>
       </div>
+    </div>
+  </div>
+  <div v-if="reconcileState" class="layout-edit-modal-overlay" @click.self="cancelReconcile">
+    <div class="reconcile-window">
+      <ReconcileMatcher
+        :diff="reconcileState.diff"
+        :model-value="reconcileState.suggestion"
+        @confirm="applyReconcile"
+        @cancel="cancelReconcile"
+      />
     </div>
   </div>
 </template>
@@ -957,6 +1000,14 @@ defineExpose({
   align-items: center;
   justify-content: center;
   background: rgb(0 0 0 / 0.55);
+}
+
+.reconcile-window {
+  width: min(48rem, 94vw);
+  background: #20242a;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.5);
+  overflow: hidden;
 }
 
 .layout-edit-modal {
