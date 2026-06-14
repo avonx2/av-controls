@@ -1,11 +1,49 @@
 import { Base } from './controls';
-import packageJson from '../package.json'; 
 
 // Base interface for all messages
 export interface Message {
   type: string;
-  protocol?: string;
   serverSeq?: number;
+}
+
+/**
+ * Optional capability flags a peer may advertise in its hello. Reserved for
+ * future use — kept open so capability negotiation can be added without
+ * breaking the hello shape.
+ */
+export type Capabilities = Record<string, boolean>;
+
+/**
+ * Sent by the controller/host as soon as it is ready to talk. Replaces the old
+ * implicit "artwork pushes spec on construction" flow: the artwork waits for
+ * this before announcing itself, which removes the attach-timing race.
+ */
+export class ControllerHello implements Message {
+  static type = 'controller-hello' as const;
+  type = ControllerHello.type;
+
+  constructor(
+    public version: string,
+    public clientId: string,
+    public capabilities?: Capabilities,
+  ) {}
+}
+
+/**
+ * The artwork's reply to {@link ControllerHello}: announces its protocol
+ * version (and name/capabilities) before the host interprets its
+ * RootSpecification. This is the seam where a future host decides whether it
+ * can drive the artwork directly or must load a matching controller version.
+ */
+export class ArtworkHello implements Message {
+  static type = 'artwork-hello' as const;
+  type = ArtworkHello.type;
+
+  constructor(
+    public version: string,
+    public name: string,
+    public capabilities?: Capabilities,
+  ) {}
 }
 
 export type UpdateOrigin =
@@ -16,7 +54,6 @@ export type UpdateOrigin =
 export class RootSpecification implements Message {
   static type = 'controller-specification' as const;
   type = RootSpecification.type;
-  version = packageJson.version;
 
   constructor(
     public name: string,

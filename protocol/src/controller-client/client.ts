@@ -1,7 +1,9 @@
 import {
   ArtworkCaptureAckMessage,
+  ArtworkHello,
   ArtworkRenderAckMessage,
   ArtworkRuntimeStatusMessage,
+  ControllerHello,
   ControlSignal,
   ControlStateRestore,
   ControlUpdate,
@@ -14,6 +16,7 @@ import {
 import { createSenderFromSpec } from '../common';
 import type { Base } from '../controls';
 import type { Sender as TransportSender } from '../transports/base';
+import { PROTOCOL_VERSION, isCompatible } from '../transports/envelope';
 
 export type ControllerRootSpecEvent = {
   name: string;
@@ -37,6 +40,13 @@ export type ControllerClientOptions = {
     rootSender: Base.Sender,
   ) => Base.State | null | undefined | Promise<Base.State | null | undefined>;
   onInitializedState?: (name: string, state: Base.State) => void;
+  /**
+   * Future multi-version seam: called with the artwork's protocol version as
+   * soon as it is known (from its hello). Today this is informational; a future
+   * host can use it to select/load a controller implementation matching a
+   * breaking protocol version. Left unpopulated by default.
+   */
+  resolveProtocol?: (version: string) => void;
 };
 
 export class ControllerClient {
@@ -46,6 +56,8 @@ export class ControllerClient {
   public onSignal: ((signal: Base.Signal) => void) | null = null;
   public onUnknownMessage: ((message: Message) => void) | null = null;
   public onError: ((error: unknown) => void) | null = null;
+  /** Protocol version announced by the artwork, once known. */
+  public peerVersion: string | null = null;
 
   private rootSpec: RootSpecification | null = null;
   private rootSender: Base.Sender | null = null;
@@ -66,6 +78,15 @@ export class ControllerClient {
     this.removeListener = this.sender.addListener((message: Message) => {
       void this.handleMessage(message);
     });
+    // Announce ourselves so the artwork sends its hello + spec. Sent after the
+    // listener is attached so we never miss the reply. On transports that gate
+    // sends until a peer is attached (websocket), this is simply a no-op there.
+    this.sender.send(new ControllerHello(PROTOCOL_VERSION, this.clientId));
+  }
+
+  /** The artwork's protocol version, if known (hello or transport envelope). */
+  getPeerVersion(): string | null {
+    return this.peerVersion ?? this.sender.peerVersion ?? null;
   }
 
   getRootSpec() {
@@ -160,7 +181,26 @@ export class ControllerClient {
     });
   }
 
+  private handleArtworkHello(hello: ArtworkHello) {
+    this.peerVersion = hello.version;
+    if (!isCompatible(hello.version)) {
+      this.onError?.(new Error(
+        `Incompatible artwork protocol version ${hello.version} (controller speaks ${PROTOCOL_VERSION})`,
+      ));
+    }
+    this.options.resolveProtocol?.(hello.version);
+    // Bridge: re-send our hello so the artwork emits its spec. This covers the
+    // case where our construction-time hello was sent before the artwork was
+    // listening. The artwork replies to ControllerHello with spec only, so this
+    // does not ping-pong.
+    this.sender.send(new ControllerHello(PROTOCOL_VERSION, this.clientId));
+  }
+
   private async handleMessage(message: Message) {
+    if (message.type === ArtworkHello.type) {
+      this.handleArtworkHello(message as ArtworkHello);
+      return;
+    }
     if (message.type === RootSpecification.type) {
       await this.handleRootSpecification(message as RootSpecification);
       return;

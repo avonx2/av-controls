@@ -10,6 +10,7 @@ import { Messages as AvControlsMessages } from '..';
 import { Base } from '../controls'
 import { StatePersistence } from '../persistence'
 import type { PersistenceOptions } from '../persistence'
+import { type Envelope, PROTOCOL_VERSION, wrap } from './envelope'
 
 const websocketConnectionLog = typeof window !== 'undefined'
   && new URLSearchParams(window.location.search).get('ws-log') === '1';
@@ -48,17 +49,22 @@ export namespace Messages {
 
     constructor(
       public id: string,
-      public rootSpecification: AvControlsMessages.RootSpecification
+      public rootSpecification: AvControlsMessages.RootSpecification,
+      // Protocol version this panel's artwork speaks. The broker stores it and
+      // stamps it onto messages it constructs on the panel's behalf.
+      public protocol: string = PROTOCOL_VERSION,
     ) {}
   }
 
+  // Transport routing wrapper around the core, versioned Envelope. The panelId
+  // is the websocket-specific routing extra; the version lives in the envelope.
   export class WrappedMessage implements Message {
     static type = 'wrapped-message' as const;
     type = WrappedMessage.type;
 
     constructor(
-      public panelId: string, 
-      public message: AvControlsMessages.Message,
+      public panelId: string,
+      public envelope: Envelope,
     ) {}
   }
 
@@ -521,7 +527,7 @@ export class Receiver extends WebSocketClient {
     if (pendingTree) {
       AvControlsMessages.mergeUpdateTree(pendingTree, updateTree)
     } else {
-      this.sendWsMessage(new Messages.WrappedMessage(id, new AvControlsMessages.ControlUpdate(updateTree, origin)))
+      this.sendWsMessage(new Messages.WrappedMessage(id, wrap(new AvControlsMessages.ControlUpdate(updateTree, origin))))
     }
     persistence?.handleUpdate(update)
   }
@@ -545,7 +551,7 @@ export class Receiver extends WebSocketClient {
     if (updateTree.update !== undefined || updateTree.children !== undefined) {
       this.sendWsMessage(new Messages.WrappedMessage(
         panelId,
-        new AvControlsMessages.ControlUpdate(updateTree, signalMessage.origin ?? { kind: 'controller' }),
+        wrap(new AvControlsMessages.ControlUpdate(updateTree, signalMessage.origin ?? { kind: 'controller' })),
       ))
     }
   }
@@ -554,16 +560,17 @@ export class Receiver extends WebSocketClient {
     switch(msg.type) {
       case Messages.WrappedMessage.type:
         const wsMessage = msg as Messages.WrappedMessage
-        switch(wsMessage.message.type) {
+        const innerMessage = wsMessage.envelope.message
+        switch(innerMessage.type) {
           case AvControlsMessages.ControlSignal.type:
-            const avMessage = wsMessage.message as AvControlsMessages.ControlSignal
+            const avMessage = innerMessage as AvControlsMessages.ControlSignal
             const receiver = this.rootReceivers[wsMessage.panelId]
             if (receiver) {
               this.dispatchSignal(wsMessage.panelId, receiver, avMessage)
             }
             break;
           case AvControlsMessages.ControlStateRestore.type:
-            const restoreMessage = wsMessage.message as AvControlsMessages.ControlStateRestore
+            const restoreMessage = innerMessage as AvControlsMessages.ControlStateRestore
             const restoreReceiver = this.rootReceivers[wsMessage.panelId]
             if (restoreReceiver && !this.stateInitializedByPanel.get(wsMessage.panelId)) {
               Base.Receiver.withUpdateOrigin(restoreMessage.origin, () => {
@@ -573,13 +580,13 @@ export class Receiver extends WebSocketClient {
               this.persistenceByPanel.get(wsMessage.panelId)?.persistReceiverState(restoreReceiver)
               this.sendWsMessage(new Messages.WrappedMessage(
                 wsMessage.panelId,
-                this.makeRootSpecification(wsMessage.panelId, restoreReceiver),
+                wrap(this.makeRootSpecification(wsMessage.panelId, restoreReceiver)),
               ))
             }
             break;
           case AvControlsMessages.ArtworkRuntimeCommandMessage.type:
             this.artworkRuntimeHandlers?.[wsMessage.panelId]?.handleMessage(
-              wsMessage.message as AvControlsMessages.ArtworkRuntimeCommandMessage,
+              innerMessage as AvControlsMessages.ArtworkRuntimeCommandMessage,
             )
             break;
         }
@@ -593,7 +600,7 @@ export class Receiver extends WebSocketClient {
       Logger.warn('Receiver send skipped: no panelId available for outgoing message', { message })
       return
     }
-    this.sendWsMessage(new Messages.WrappedMessage(resolvedPanelId, message))
+    this.sendWsMessage(new Messages.WrappedMessage(resolvedPanelId, wrap(message)))
   }
 
   private resolveDefaultPanelId(): string | null {
@@ -616,6 +623,8 @@ export class Receiver extends WebSocketClient {
 
 export class Sender extends WebSocketClient implements BaseSender {
   panelId: string | null = null
+  /** Protocol version of the attached panel, read from the envelope. */
+  public peerVersion: string | null = null
   private isPanelAttached = false
   private lastServerSeq = 0
   private protocolClientId: string | null = null
@@ -664,7 +673,8 @@ export class Sender extends WebSocketClient implements BaseSender {
         break;
       case Messages.WrappedMessage.type:
         const wrapped = message as Messages.WrappedMessage
-        const avMessage = wrapped.message as AvControlsMessages.Message
+        const avMessage = wrapped.envelope.message as AvControlsMessages.Message
+        this.peerVersion = wrapped.envelope.protocol
         if (avMessage.type === AvControlsMessages.RootSpecification.type) {
           this.panelId = wrapped.panelId
           this.isPanelAttached = true
@@ -715,8 +725,8 @@ export class Sender extends WebSocketClient implements BaseSender {
           bufferedAmount: this.getSocketBufferedAmount(),
         })
       }
-      this.sendWsMessage(new Messages.WrappedMessage(this.panelId, message));
-    } 
+      this.sendWsMessage(new Messages.WrappedMessage(this.panelId, wrap(message)));
+    }
   }
 
   getBufferedAmount(): number {

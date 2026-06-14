@@ -60,6 +60,7 @@ type PanelInfo = {
   receiver: WebSocket | null;
   online: boolean;
   generation: number;
+  protocol: string; // protocol version the panel's artwork speaks
 };
 
 let receiver: WebSocket | null = null;
@@ -271,6 +272,7 @@ function handleReceiverMessage(ws: WebSocket, message: string) {
           receiver: ws,
           online: true,
           generation,
+          protocol: msg.protocol,
         };
 
         log(`NetPanel ${msg.id} added`, {
@@ -290,7 +292,7 @@ function handleReceiverMessage(ws: WebSocket, message: string) {
       case Transports.WebSocket.Messages.WrappedMessage.type:
         // forward the message to all subscribers of the panel
         const panelId = parsed.panelId;
-        const avMessage = parsed.message;
+        const avMessage = parsed.envelope?.message;
         const sourcePanel = netPanels[panelId];
         if (!sourcePanel || sourcePanel.receiver !== ws) {
           warn('Ignoring stale receiver message', {
@@ -375,7 +377,7 @@ function handleSenderMessage(ws: WebSocket, message: string) {
         // just forward the message to the single receiver
         const targetReceiver = netPanels[parsed.panelId]?.receiver;
         if (targetReceiver && targetReceiver.readyState === WebSocket.OPEN) {
-          const avMessage = parsed.message;
+          const avMessage = parsed.envelope?.message;
           if (avMessage?.type === 'control-signal') {
             const path = extractFirstSignalPath(avMessage.signal);
             const key = makeSeqKey(parsed.panelId, path);
@@ -405,7 +407,7 @@ function handleSenderMessage(ws: WebSocket, message: string) {
           warn('No receiver available, message dropped', {
             senderSocketId: getSocketId(ws),
             panelId: parsed.panelId,
-            type: parsed.message?.type,
+            type: parsed.envelope?.message?.type,
           });
         }
         break;
@@ -537,7 +539,10 @@ function sendRootSpecificationToSubscriber(panelId: string, subscriber: WebSocke
     return;
   }
   assignServerSeq(panelId, rootSpec);
-  const wrappedRootSpec = new Transports.WebSocket.Messages.WrappedMessage(panelId, rootSpec);
+  const wrappedRootSpec = new Transports.WebSocket.Messages.WrappedMessage(
+    panelId,
+    Transports.Envelope.wrap(rootSpec, panel.protocol),
+  );
   subscriber.send(JSON.stringify(wrappedRootSpec));
 }
 
@@ -553,7 +558,11 @@ function sendMessageToReceiver(ws: WebSocket, panelId: string, message: any) {
   if (ws.readyState !== WebSocket.OPEN) {
     return;
   }
-  const wrapped = new Transports.WebSocket.Messages.WrappedMessage(panelId, message);
+  const protocol = netPanels[panelId]?.protocol;
+  const wrapped = new Transports.WebSocket.Messages.WrappedMessage(
+    panelId,
+    Transports.Envelope.wrap(message, protocol),
+  );
   ws.send(JSON.stringify(wrapped));
 }
 

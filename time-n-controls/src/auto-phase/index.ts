@@ -1,16 +1,19 @@
 import * as ort from 'onnxruntime-web'
 import { Controls } from '@av-controls/protocol'
-import { MelFrontend, MelFrontendConfig } from './mel-frontend'
+import {
+  DancePhaseEstimator,
+  createAudioProcessorUrl,
+  AUDIO_PROCESSOR_NAME,
+  type ModelMeta,
+} from 'dance-ai'
 import { AutoPhaseClock } from './phase-clock'
 import { PhaseClock } from '../phase-clock'
 import { PhaseQueue } from '../phase-queue'
-import { createAudioProcessorUrl } from './audio-processor-source'
 
-// Re-export for convenience
-export { MelFrontend } from './mel-frontend'
-export type { MelFrontendConfig } from './mel-frontend'
+// Re-export the model frontend + worklet helpers from dance-ai for convenience
+export { MelFrontend, createAudioProcessorUrl, AUDIO_PROCESSOR_NAME } from 'dance-ai'
+export type { ModelMeta, FrameEstimate } from 'dance-ai'
 export { AutoPhaseClock } from './phase-clock'
-export { createAudioProcessorUrl } from './audio-processor-source'
 
 export interface AutoPhaseConfig {
   /** Path to the ONNX model file (in artwork's public directory) */
@@ -19,16 +22,33 @@ export interface AutoPhaseConfig {
   menuSpec: Controls.Menu.Spec
   /** LocalStorage key for device preference */
   storageKey?: string
-  /** Mel frontend configuration */
-  melConfig?: MelFrontendConfig
-  /** Target sample rate (default 24000) */
+  /**
+   * Model hyperparameters as a parsed {@link ModelMeta}. Omit to build one from
+   * the individual fields below / their defaults. (A resolved object is required
+   * rather than a meta.json URL because the AudioContext sample rate and worklet
+   * frame size must be known synchronously when capture starts.)
+   */
+  meta?: ModelMeta
+  /** Enable dance-ai causal level normalization (default true). */
+  normalize?: boolean
+  /** Target sample rate (default 24000). Ignored if `meta` is provided. */
   sampleRate?: number
-  /** Audio frame size (default 400) */
+  /** Audio frame size (default 400). Ignored if `meta` is provided. */
   frameSize?: number
-  /** GRU hidden size (default 512) */
+  /** FFT frames per mel frame (default 2). Ignored if `meta` is provided. */
+  fftFrames?: number
+  /** Number of mel bands (default 96). Ignored if `meta` is provided. */
+  nMels?: number
+  /** Mel filterbank low edge in Hz (default 27.5). Ignored if `meta` is provided. */
+  fMin?: number
+  /** Mel filterbank high edge in Hz (default 8000). Ignored if `meta` is provided. */
+  fMax?: number
+  /** Recurrent hidden size (default 512). Ignored if `meta` is provided. */
   hiddenSize?: number
-  /** Number of GRU layers (default 2) */
+  /** Number of recurrent layers (default 2). Ignored if `meta` is provided. */
   numLayers?: number
+  /** Model type string; `phase_lstm_mel` enables LSTM cell state (default `phase_gru_mel`). Ignored if `meta` is provided. */
+  modelType?: string
   /** Called when an incoming audio frame is dropped in favor of a newer one */
   onAudioFrameDropped?: () => void
 }
@@ -72,9 +92,7 @@ export class AutoPhase implements PhaseClock {
   private readonly grantAccessLabel = 'Grant mic access'
   private readonly syntheticPhaseRate = 0.5 // 4/4 @ 120 BPM => 0.5 bars/sec
 
-  private session: ort.InferenceSession | null = null
-  private hiddenState: ort.Tensor | null = null
-  private melFrontend: MelFrontend
+  private estimator: DancePhaseEstimator | null = null
   private phaseClock: AutoPhaseClock
 
   private audioContext: AudioContext | null = null
@@ -99,29 +117,31 @@ export class AutoPhase implements PhaseClock {
   private disposed = false
   private modelLoadGeneration = 0
 
-  private readonly config: Required<Omit<AutoPhaseConfig, 'melConfig' | 'menuSpec' | 'onAudioFrameDropped'>> & { melConfig?: MelFrontendConfig }
+  private readonly modelPath: string
+  private readonly meta: ModelMeta
+  private readonly normalize: boolean
   private readonly storageKey: string
   private readonly onAudioFrameDropped?: () => void
 
   constructor(config: AutoPhaseConfig) {
-    this.config = {
-      modelPath: config.modelPath,
-      storageKey: config.storageKey ?? 'avonx-autophase-device',
-      sampleRate: config.sampleRate ?? 24000,
-      frameSize: config.frameSize ?? 400,
-      hiddenSize: config.hiddenSize ?? 512,
-      numLayers: config.numLayers ?? 2,
-      melConfig: config.melConfig
-    }
-    this.storageKey = this.config.storageKey
+    this.modelPath = config.modelPath
+    this.storageKey = config.storageKey ?? 'avonx-autophase-device'
+    this.normalize = config.normalize ?? true
     this.onAudioFrameDropped = config.onAudioFrameDropped
 
-    // Initialize mel frontend
-    this.melFrontend = new MelFrontend({
-      sampleRate: this.config.sampleRate,
-      frameSize: this.config.frameSize,
-      ...this.config.melConfig
-    })
+    // Resolve model hyperparameters. Defaults match the bundled GRU checkpoint
+    // (sweep_L2_H512_M96): 2 layers, hidden 512, 96 mels @ 24kHz.
+    this.meta = config.meta ?? {
+      model_type: config.modelType ?? 'phase_gru_mel',
+      samplerate: config.sampleRate ?? 24000,
+      frame_size: config.frameSize ?? 400,
+      fft_frames: config.fftFrames ?? 2,
+      n_mels: config.nMels ?? 96,
+      f_min: config.fMin ?? 27.5,
+      f_max: config.fMax ?? 8000,
+      hidden: config.hiddenSize ?? 512,
+      n_layers: config.numLayers ?? 2,
+    }
 
     // Initialize phase clock
     this.phaseClock = new AutoPhaseClock()
@@ -141,17 +161,6 @@ export class AutoPhase implements PhaseClock {
 
     // Start loading the model
     this.loadModel()
-  }
-
-  private disposeTensor(tensor: ort.Tensor | null | undefined) {
-    if (!tensor) {
-      return
-    }
-    try {
-      tensor.dispose()
-    } catch (err) {
-      console.warn('[AutoPhase] Failed to dispose tensor:', err)
-    }
   }
 
   private logDroppedAudioFrames() {
@@ -217,37 +226,23 @@ export class AutoPhase implements PhaseClock {
       ort.env.wasm.numThreads = 1
       ort.env.wasm.proxy = false
 
-      const session = await ort.InferenceSession.create(this.config.modelPath)
-      const disposableSession = session as ort.InferenceSession & { dispose?: () => Promise<void> }
+      const estimator = await DancePhaseEstimator.create({
+        ort,
+        model: this.modelPath,
+        meta: this.meta,
+        normalize: this.normalize,
+      })
       if (this.disposed || loadGeneration !== this.modelLoadGeneration) {
-        if (disposableSession.dispose) {
-          void disposableSession.dispose().catch((err: unknown) => {
-            console.warn('[AutoPhase] Failed to dispose superseded session:', err)
-          })
-        }
+        estimator.dispose()
         return
       }
 
-      this.session = session
-      this.resetHiddenState()
-
+      this.estimator = estimator
       this.modelLoaded = true
       console.log('[AutoPhase] Model loaded successfully')
     } catch (err) {
       console.error('[AutoPhase] Failed to load model:', err)
     }
-  }
-
-  private resetHiddenState() {
-    this.disposeTensor(this.hiddenState)
-
-    // Initialize hidden state: [numLayers, 1, hiddenSize]
-    const stateSize = this.config.numLayers * 1 * this.config.hiddenSize
-    this.hiddenState = new ort.Tensor(
-      'float32',
-      new Float32Array(stateSize),
-      [this.config.numLayers, 1, this.config.hiddenSize]
-    )
   }
 
   private async handleMenuSelection(index: number) {
@@ -334,7 +329,7 @@ export class AutoPhase implements PhaseClock {
     try {
       // Create audio context at target sample rate if not exists
       if (!this.audioContext) {
-        this.audioContext = new AudioContext({ sampleRate: this.config.sampleRate })
+        this.audioContext = new AudioContext({ sampleRate: this.meta.samplerate })
       }
 
       // Resume if suspended
@@ -356,7 +351,7 @@ export class AutoPhase implements PhaseClock {
       this.currentStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: { exact: deviceId },
-          sampleRate: { ideal: this.config.sampleRate },
+          sampleRate: { ideal: this.meta.samplerate },
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false
@@ -368,8 +363,8 @@ export class AutoPhase implements PhaseClock {
 
       // Create or reuse worklet node
       if (!this.workletNode) {
-        this.workletNode = new AudioWorkletNode(this.audioContext, 'phase-audio-processor', {
-          processorOptions: { frameSize: this.config.frameSize }
+        this.workletNode = new AudioWorkletNode(this.audioContext, AUDIO_PROCESSOR_NAME, {
+          processorOptions: { frameSize: this.meta.frame_size }
         })
 
         this.workletNode.port.onmessage = (event) => {
@@ -401,7 +396,7 @@ export class AutoPhase implements PhaseClock {
     if (this.inputMode !== 'audio device input') {
       return
     }
-    if (!this.session || !this.hiddenState || !this.modelLoaded) {
+    if (!this.estimator || !this.modelLoaded) {
       return
     }
     if (!this.enabled) {
@@ -409,58 +404,12 @@ export class AutoPhase implements PhaseClock {
     }
 
     try {
-      // Compute mel spectrogram from audio frame
-      const mel = this.melFrontend.process(audioFrame)
-
-      // Create input tensor: [batch=1, seq_len=1, n_mels]
-      const melTensor = new ort.Tensor(
-        'float32',
-        mel,
-        [1, 1, this.melFrontend.nMels]
-      )
-
-      // Run inference with mel features
-      const feeds: Record<string, ort.Tensor> = {
-        mel: melTensor,
-        state_h: this.hiddenState
-      }
-
-      let results: Record<string, ort.Tensor> | null = null
-      try {
-        results = await this.session.run(feeds)
-
-        // Extract outputs
-        const phaseOut = results.phase_out
-        const stateHOut = results.state_h_out
-
-        if (phaseOut && stateHOut) {
-          const previousHiddenState = this.hiddenState
-          this.hiddenState = stateHOut as ort.Tensor
-
-        // Decode phase output: [batch, seq_len, 3] = [sin, cos, log(bar_duration_seconds)]
-        const data = phaseOut.data as Float32Array
-        const sinPhase = data[0]!
-        const cosPhase = data[1]!
-        const logBarDuration = data[2]!
-
-        // Decode phase from sin/cos
-        const rawPhase = (Math.atan2(sinPhase, cosPhase) / (2 * Math.PI) + 1) % 1
-
-        // Update phase clock
-        this.phaseClock.updateFromInference(rawPhase, logBarDuration)
-
-          this.disposeTensor(previousHiddenState)
-        }
-      } finally {
-        this.disposeTensor(melTensor)
-        if (results) {
-          for (const [name, tensor] of Object.entries(results)) {
-            if (name === 'state_h_out' && tensor === this.hiddenState) {
-              continue
-            }
-            this.disposeTensor(tensor)
-          }
-        }
+      // dance-ai buffers samples internally and returns one estimate per
+      // completed frame (sin/cos phase decode + recurrent state are handled
+      // inside the estimator).
+      const estimates = await this.estimator.feed(audioFrame)
+      for (const estimate of estimates) {
+        this.phaseClock.updateFromInference(estimate.phase, estimate.barDurationS)
       }
     } catch (err) {
       console.error('[AutoPhase] Inference error:', err)
@@ -526,8 +475,7 @@ export class AutoPhase implements PhaseClock {
 
   reset(): void {
     this.phaseClock.reset()
-    this.melFrontend.reset()
-    this.resetHiddenState()
+    this.estimator?.reset()
   }
 
   // Public API
@@ -647,8 +595,8 @@ export class AutoPhase implements PhaseClock {
   feedSilence() {
     if (!this.modelLoaded || !this.enabled) return
 
-    // Process silence through mel frontend and inference
-    const silenceFrame = new Float32Array(this.config.frameSize)
+    // Process silence through the estimator
+    const silenceFrame = new Float32Array(this.meta.frame_size)
     this.enqueueAudioFrame(silenceFrame)
   }
 
@@ -678,16 +626,8 @@ export class AutoPhase implements PhaseClock {
     this.inferenceInFlight = false
     this.droppedAudioFrames = 0
 
-    this.disposeTensor(this.hiddenState)
-    this.hiddenState = null
-
-    const session = this.session as (ort.InferenceSession & { dispose?: () => Promise<void> }) | null
-    if (session?.dispose) {
-      void session.dispose().catch((err: unknown) => {
-        console.warn('[AutoPhase] Failed to dispose session:', err)
-      })
-    }
-    this.session = null
+    this.estimator?.dispose()
+    this.estimator = null
 
     this.isCapturing = false
   }

@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@av-controls/protocol": "^0.5.2",
+    "dance-ai": "^0.1.0",
     "onnxruntime-web": "^1.17.0"
   },
   "files": [

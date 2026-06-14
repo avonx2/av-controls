@@ -24,10 +24,9 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
   /**
    * Update phase from model inference output.
    * @param rawPhase Decoded phase [0, 1) from atan2(sin, cos)
-   * @param rawLogBarDuration Natural log of bar duration in seconds
+   * @param barDurationS Predicted bar duration in seconds
    */
-  updateFromInference(rawPhase: number, rawLogBarDuration: number) {
-    const barDurationS = Math.exp(rawLogBarDuration)
+  updateFromInference(rawPhase: number, barDurationS: number) {
     const phaseRateCyclesPerSec = Number.isFinite(barDurationS) && barDurationS > 1e-4
       ? 1 / barDurationS
       : 0
