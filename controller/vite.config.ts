@@ -16,7 +16,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@av-controls/protocol': path.join(path.dirname(require.resolve('@av-controls/protocol/package.json')), 'src/index.ts')
+      '@av-controls/protocol': path.join(path.dirname(require.resolve('@av-controls/protocol/package.json')), 'src/index.ts'),
+      '@av-controls/reconcile-ui': path.join(path.dirname(require.resolve('@av-controls/reconcile-ui/package.json')), 'src/index.ts')
     }
   },
   optimizeDeps: {

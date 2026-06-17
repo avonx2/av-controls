@@ -3,7 +3,7 @@
   "version": "0.3.6",
   "main": "src/main.ts",
   "scripts": {
-    "dev": "vite",
+    "dev": "node ../../scripts/check-workspace-deps.mjs && vite",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
