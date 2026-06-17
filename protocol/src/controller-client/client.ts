@@ -75,6 +75,7 @@ export class ControllerClient {
     this.sender = sender;
     this.options = options;
     this.clientId = options.clientId ?? `controller-${Math.random().toString(36).slice(2, 10)}`;
+    this.sender.setClientId?.(this.clientId);
     this.removeListener = this.sender.addListener((message: Message) => {
       void this.handleMessage(message);
     });
