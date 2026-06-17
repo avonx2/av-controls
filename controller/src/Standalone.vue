@@ -21,9 +21,24 @@ const mode = ref<Mode>('connect')
 const error = ref('')
 
 const netUrl = ref(DEFAULT_WS)
+const netPassword = ref('')
 const tabUrl = ref(DEFAULT_TAB)
 
+// For exhibition / protected brokers, password is entered here and appended
+// as ?password=... query param on the WS URL (broker can inspect it).
+
 const controller = ref<InstanceType<typeof Controller> | null>(null)
+
+function sanitizeUrlForDisplay(u: string) {
+  try {
+    const url = new URL(u)
+    url.searchParams.delete('password')
+    url.searchParams.delete('pw')
+    return url.toString()
+  } catch {
+    return u
+  }
+}
 
 // --- net (WebSocket broker) ---
 const wsSender = shallowRef<Transports.WebSocket.Sender | null>(null)
@@ -75,7 +90,34 @@ onMounted(() => {
   const params = new URLSearchParams(window.location.search)
   const net = params.get('net')
   const tab = params.get('tab')
-  if (net) connectNet(net)
+  let pw = params.get('password') || params.get('pw') || ''
+  if (net) {
+    try {
+      const u = new URL(net)
+      const pwInUrl = u.searchParams.get('password') || u.searchParams.get('pw') || ''
+      if (pwInUrl) {
+        pw = pwInUrl
+        u.searchParams.delete('password')
+        u.searchParams.delete('pw')
+        // netUrl will be set to cleaned
+      }
+      netUrl.value = u.toString()
+    } catch {
+      netUrl.value = net
+    }
+  }
+  if (pw) netPassword.value = pw
+  if (net) {
+    let connectUrl = netUrl.value
+    if (pw) {
+      try {
+        const u = new URL(connectUrl)
+        u.searchParams.set('password', pw)
+        connectUrl = u.toString()
+      } catch {}
+    }
+    connectNet(connectUrl)
+  }
   else if (tab) connectTab(tab)
   else mode.value = 'connect'
 })
@@ -87,7 +129,18 @@ onBeforeUnmount(() => {
 
 // --- connect form: set the param and reload (so reloads reconnect) ---
 function submitNet() {
-  window.location.search = new URLSearchParams({ net: netUrl.value }).toString()
+  let finalUrl = netUrl.value.trim()
+  if (netPassword.value) {
+    try {
+      const u = new URL(finalUrl)
+      u.searchParams.set('password', netPassword.value)
+      finalUrl = u.toString()
+    } catch {
+      error.value = 'Net panel URL must be a valid ws:// or wss:// URL'
+      return
+    }
+  }
+  window.location.search = new URLSearchParams({ net: finalUrl }).toString()
 }
 function submitTab() {
   window.location.search = new URLSearchParams({ tab: tabUrl.value }).toString()
@@ -143,7 +196,7 @@ const isConnected = () =>
         <button v-for="id in panelIds" :key="id" @click="choosePanelResolve(id)">{{ id }}</button>
       </div>
     </template>
-    <p v-else>Connecting to {{ netUrl }} — waiting for panel list…</p>
+    <p v-else>Connecting to {{ sanitizeUrlForDisplay(netUrl) }} — waiting for panel list…</p>
     <button class="link" @click="backToConnect">cancel</button>
   </div>
 
@@ -160,7 +213,8 @@ const isConnected = () =>
     <div class="card">
       <h2>Net panel</h2>
       <p>Connect to an av-controls WebSocket broker.</p>
-      <input v-model="netUrl" spellcheck="false" @keyup.enter="submitNet" />
+      <input v-model="netUrl" spellcheck="false" placeholder="ws://host:port" @keyup.enter="submitNet" />
+      <input v-model="netPassword" type="password" spellcheck="false" placeholder="Password (optional)" @keyup.enter="submitNet" />
       <button @click="submitNet">Connect</button>
     </div>
     <div class="card">
