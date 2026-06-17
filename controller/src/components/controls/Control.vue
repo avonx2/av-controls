@@ -43,6 +43,17 @@ const layoutEditConfig = inject('layoutEditConfig', {
   logSnapping: false,
 })
 const openControlEditor = inject<(control: Controls.Base.Sender) => void>('openControlEditor')
+const openControlContextMenu = inject<(control: Controls.Base.Sender, event: MouseEvent) => void>('openControlContextMenu')
+
+function onContextMenu(event: MouseEvent) {
+  if (!layoutEditMode.value || !openControlContextMenu) {
+    return
+  }
+  // Let the innermost control claim the menu; don't bubble to parent containers.
+  event.preventDefault()
+  event.stopPropagation()
+  openControlContextMenu(props.control, event)
+}
 
 const type = computed(() => props.control.spec.type)
 const isContainerControl = computed(() =>
@@ -455,6 +466,7 @@ const showlabels = false
     class="control"
     :class="[type, { 'layout-edit-mode': layoutEditMode }]"
     :style="posize"
+    @contextmenu="onContextMenu"
   >
     <div v-if='showlabels' class=typelabel>{{ type }}</div>
 

@@ -263,11 +263,16 @@ function handleReceiverMessage(ws: WebSocket, message: string) {
         const previous = netPanels[msg.id];
         const generation = (previous?.generation ?? 0) + 1;
         receiverPanelIds.get(ws)?.add(msg.id);
+        // Overlay preserved values onto the freshly announced spec's state
+        // skeleton, so controls added since the last seed (e.g. during dev HMR,
+        // without a broker restart) exist in currentState with their defaults
+        // instead of being silently dropped.
+        const mergedState = previous?.stateInitialized
+          ? mergeState(msg.rootSpecification.currentState, previous.currentState)
+          : msg.rootSpecification.currentState;
         netPanels[msg.id] = {
           spec: msg.rootSpecification,
-          currentState: previous?.stateInitialized
-            ? previous.currentState
-            : msg.rootSpecification.currentState,
+          currentState: mergedState,
           stateInitialized: previous?.stateInitialized || msg.rootSpecification.stateInitialized,
           receiver: ws,
           online: true,
@@ -283,7 +288,7 @@ function handleReceiverMessage(ws: WebSocket, message: string) {
           subscriberSocketIds: getSubscriberSocketIds(msg.id),
         });
         if (previous?.stateInitialized) {
-          sendMessageToReceiver(ws, msg.id, new ControlStateRestore(previous.currentState));
+          sendMessageToReceiver(ws, msg.id, new ControlStateRestore(mergedState));
         }
         sendRootSpecificationToSubscribers(msg.id);
         broadcastPanelList();
@@ -590,6 +595,25 @@ function assignServerSeq(panelId: string, avMessage: any) {
   const nextSeq = (serverSeqByPanel.get(panelId) ?? 0) + 1;
   serverSeqByPanel.set(panelId, nextSeq);
   avMessage.serverSeq = nextSeq;
+}
+
+/**
+ * Deep-merge stored values onto a state skeleton. `base` (the latest spec's
+ * currentState) defines the structure; `override` (the preserved state)
+ * supplies values wherever the same keys still exist. Controls present only in
+ * `base` keep their defaults; controls only in `override` (since removed) drop
+ * out. This keeps currentState structurally aligned with the live spec.
+ */
+function mergeState(base: any, override: any): any {
+  if (base === null || typeof base !== 'object') return override !== undefined ? override : base;
+  if (override === null || typeof override !== 'object') return base;
+  const result: any = Array.isArray(base) ? [...base] : { ...base };
+  for (const key in base) {
+    if (key in override) {
+      result[key] = mergeState(base[key], override[key]);
+    }
+  }
+  return result;
 }
 
 /**

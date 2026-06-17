@@ -85,6 +85,7 @@ const layoutPanel = reactive({
 const layoutReport = ref('')
 const layoutReportVisible = ref(false)
 const editControlTarget = ref<Controls.Base.Sender | null>(null)
+const controlContextMenu = ref<{ control: Controls.Base.Sender; x: number; y: number } | null>(null)
 const editControlDraft = reactive({
   name: '',
   color: '#888888',
@@ -94,10 +95,27 @@ const onKeyDown = (event: KeyboardEvent) => {
   if (event.defaultPrevented) {
     return
   }
-  if (event.key === 'Escape' && activeModal.value) {
-    closeModal()
-    event.preventDefault()
-    return
+  if (event.key === 'Escape') {
+    // Close one layer per press (modal -> control details -> layout edit mode),
+    // stopping propagation so a single Escape never cascades through layers.
+    if (activeModal.value) {
+      closeModal()
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+    if (editControlTarget.value) {
+      closeControlEditor()
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+    if (layoutEditMode.value) {
+      disableLayoutEditMode()
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
   }
   if (event.ctrlKey || event.metaKey || event.altKey) {
     return
@@ -213,6 +231,9 @@ provide('openControlEditor', (control: Controls.Base.Sender) => {
   editControlTarget.value = control
   editControlDraft.name = control.spec.name
   editControlDraft.color = normalizeColorInput(control.spec.color)
+})
+provide('openControlContextMenu', (control: Controls.Base.Sender, event: MouseEvent) => {
+  controlContextMenu.value = { control, x: event.clientX, y: event.clientY }
 })
 
 onMounted(() => {
@@ -548,6 +569,24 @@ function closeControlEditor() {
   editControlTarget.value = null
 }
 
+function closeControlContextMenu() {
+  controlContextMenu.value = null
+}
+
+async function copyControlValuesFromContextMenu() {
+  const control = controlContextMenu.value?.control
+  if (!control) return
+  // getState() is the canonical value serialization (same shape as export /
+  // import) and already recurses through group/tabs/modal children.
+  const json = JSON.stringify(control.getState(), null, 2)
+  try {
+    await navigator.clipboard.writeText(json)
+  } catch (error) {
+    console.warn('Failed to copy control values to clipboard', error)
+  }
+  closeControlContextMenu()
+}
+
 function saveControlEditor() {
   if (!editControlTarget.value) return
   editControlTarget.value.spec.name = editControlDraft.name.trim() || editControlTarget.value.spec.name
@@ -770,6 +809,22 @@ defineExpose({
       </div>
     </div>
   </div>
+  <div
+    v-if="controlContextMenu"
+    class="control-context-menu-backdrop"
+    @pointerdown.self="closeControlContextMenu"
+    @contextmenu.prevent="closeControlContextMenu"
+  >
+    <div
+      class="control-context-menu"
+      :style="{ left: controlContextMenu.x + 'px', top: controlContextMenu.y + 'px' }"
+    >
+      <div class="control-context-menu-title">{{ controlContextMenu.control.spec.name }}</div>
+      <button class="control-context-menu-item" @click="copyControlValuesFromContextMenu">
+        copy values as JSON
+      </button>
+    </div>
+  </div>
   <div v-if="reconcileState" class="layout-edit-modal-overlay" @click.self="cancelReconcile">
     <div class="reconcile-window">
       <ReconcileMatcher
@@ -821,6 +876,48 @@ defineExpose({
   height: 100%;
   position: relative;
   transition: filter 0.3s ease;
+}
+
+.control-context-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+}
+
+.control-context-menu {
+  position: fixed;
+  min-width: 12rem;
+  background: #000d;
+  color: #fff;
+  border: 1px solid #4af;
+  border-radius: 0.4rem;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+
+  & .control-context-menu-title {
+    padding: 0.25rem 0.5rem;
+    font-weight: bold;
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & .control-context-menu-item {
+    text-align: left;
+    background: transparent;
+    color: inherit;
+    border: none;
+    border-radius: 0.25rem;
+    padding: 0.4rem 0.5rem;
+    cursor: pointer;
+
+    &:hover {
+      background: #4af;
+    }
+  }
 }
 
 .layout-edit-panel {
