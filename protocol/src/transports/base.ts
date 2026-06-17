@@ -17,6 +17,14 @@ export abstract class Sender {
    */
   abstract send(message: Message): void;
 
+  /**
+   * Adopt the controller's client id, if the transport needs it (e.g. the
+   * websocket transport tags its frames with it). Optional so transports that
+   * don't multiplex per-client (window/postMessage, relay shims) can omit it;
+   * callers invoke it via optional chaining.
+   */
+  setClientId?(clientId: string): void;
+
   getBufferedAmount(): number {
     return 0;
   }
