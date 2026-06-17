@@ -13,7 +13,9 @@ import { ref, shallowRef, onMounted, onBeforeUnmount } from 'vue'
 import Controller from './components/Controller.vue'
 import { Transports } from '@av-controls/protocol'
 
-const DEFAULT_WS = 'ws://localhost:8080'
+// Empty by default: with no ?net= param the connect page shows an empty broker
+// field (operator types e.g. ws://felix-pc:8080 + the controller password).
+const DEFAULT_WS = ''
 const DEFAULT_TAB = 'http://localhost:5173'
 
 type Mode = 'connect' | 'net' | 'tab'

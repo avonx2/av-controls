@@ -47,9 +47,29 @@ function verbose(message: string, data?: unknown) {
 // serve websocket
 const parsedWsPort = Number.parseInt(process.env.WS_PORT ?? '', 10);
 const wsPort = Number.isFinite(parsedWsPort) ? parsedWsPort : 8080;
-const wss = new WebSocketServer({ port: wsPort }); 
+const wss = new WebSocketServer({ port: wsPort });
 log(`🚀 WebSocket server running on port ${wsPort}`);
 let shuttingDown = false;
+
+// Optional credential protection for exhibition mode. Senders (controllers) and
+// receivers (artworks) authenticate with *separate* secrets, presented as
+// ?password= (or ?pw=) on the WebSocket URL. If a secret is unset, that role is
+// open — so `npm run dev:*` keeps working with no credentials.
+const controllerPassword = process.env.CONTROLLER_PASSWORD || process.env.EXHIBIT_PASSWORD || process.env.PASSWORD || '';
+const artworkPassword = process.env.ARTWORK_PASSWORD || '';
+if (controllerPassword) log('🔒 Controller (sender) authentication required');
+if (artworkPassword) log('🔒 Artwork (receiver) authentication required');
+
+const presentedCredential = new WeakMap<WebSocket, string>();
+
+function extractCredential(req: { url?: string } | undefined): string {
+  try {
+    const url = new URL(req?.url ?? '/', 'http://localhost');
+    return url.searchParams.get('password') || url.searchParams.get('pw') || '';
+  } catch {
+    return '';
+  }
+}
 
 type Sender = WebSocket;
 
@@ -83,11 +103,12 @@ function getSocketId(ws: WebSocket) {
   return id;
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   if (shuttingDown) {
     ws.close(1001, 'broker shutting down');
     return;
   }
+  presentedCredential.set(ws, extractCredential(req));
   log('New WS connection', { socketId: getSocketId(ws) });
 
   ws.onmessage = (event) => {
@@ -96,6 +117,11 @@ wss.on('connection', (ws) => {
       const type = deserialized.type;
       switch (type) {
         case Transports.WebSocket.Messages.RegisterReceiver.type:
+          if (artworkPassword && presentedCredential.get(ws) !== artworkPassword) {
+            warn('Rejected receiver: invalid credential', { socketId: getSocketId(ws) });
+            ws.close(1008, 'invalid-credential');
+            return;
+          }
           receiverGeneration += 1;
           const generation = receiverGeneration;
           receiver = ws;
@@ -108,6 +134,11 @@ wss.on('connection', (ws) => {
           break;
 
         case Transports.WebSocket.Messages.RegisterSender.type:
+          if (controllerPassword && presentedCredential.get(ws) !== controllerPassword) {
+            warn('Rejected sender: invalid credential', { socketId: getSocketId(ws) });
+            ws.close(1008, 'invalid-credential');
+            return;
+          }
           pruneClosedSenders();
           if (!senders.includes(ws)) {
             senders.push(ws);
