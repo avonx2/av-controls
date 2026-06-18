@@ -7,24 +7,45 @@
 // URL params decide the transport:
 //   ?net=ws://host:port   -> connect to an av-controls WebSocket broker
 //   ?tab=http://host:port -> open that artwork in a tab and control it directly
-// With no param we show a small connection form; submitting it sets the param
-// in the location and reloads, so a reload reconnects immediately.
+// With no get params we show the connect form (prefilled from localStorage
+// most-recent values, or ws://localhost:8080 default). Submitting the form
+// sets the param in the location and reloads (auto-connect only happens when
+// explicit ?net or ?tab params are present on load).
 import { ref, shallowRef, onMounted, onBeforeUnmount } from 'vue'
 import Controller from './components/Controller.vue'
 import { Transports } from '@av-controls/protocol'
 
-// Empty by default: with no ?net= param the connect page shows an empty broker
-// field (operator types e.g. ws://felix-pc:8080 + the controller password).
-const DEFAULT_WS = ''
+// Defaults used only when nothing is remembered in localStorage yet.
+// When the page is loaded with no ?net / ?tab get params, we always show the
+// connect UI form (prefilled from localStorage if available) and do not auto-connect.
+const DEFAULT_WS = 'ws://localhost:8080'
 const DEFAULT_TAB = 'http://localhost:5173'
+
+function getRememberedValues() {
+  try {
+    return {
+      netUrl: localStorage.getItem('avc:lastNetUrl') || DEFAULT_WS,
+      netPassword: localStorage.getItem('avc:lastNetPw') ?? '',
+      tabUrl: localStorage.getItem('avc:lastTabUrl') || DEFAULT_TAB,
+    }
+  } catch {
+    return {
+      netUrl: DEFAULT_WS,
+      netPassword: '',
+      tabUrl: DEFAULT_TAB,
+    }
+  }
+}
+
+const remembered = getRememberedValues()
 
 type Mode = 'connect' | 'net' | 'tab'
 const mode = ref<Mode>('connect')
 const error = ref('')
 
-const netUrl = ref(DEFAULT_WS)
-const netPassword = ref('')
-const tabUrl = ref(DEFAULT_TAB)
+const netUrl = ref(remembered.netUrl)
+const netPassword = ref(remembered.netPassword)
+const tabUrl = ref(remembered.tabUrl)
 
 // For exhibition / protected brokers, password is entered here and appended
 // as ?password=... query param on the WS URL (broker can inspect it).
@@ -121,7 +142,12 @@ onMounted(() => {
     connectNet(connectUrl)
   }
   else if (tab) connectTab(tab)
-  else mode.value = 'connect'
+  else {
+    // No get params given on this load: stay on the connect form UI.
+    // The netUrl / netPassword / tabUrl refs were already initialized from
+    // localStorage (or the localhost defaults) at the top of the script.
+    mode.value = 'connect'
+  }
 })
 
 onBeforeUnmount(() => {
@@ -131,21 +157,35 @@ onBeforeUnmount(() => {
 
 // --- connect form: set the param and reload (so reloads reconnect) ---
 function submitNet() {
-  let finalUrl = netUrl.value.trim()
-  if (netPassword.value) {
+  const enteredUrl = netUrl.value.trim()
+  const enteredPw = netPassword.value
+
+  let finalUrl = enteredUrl
+  if (enteredPw) {
     try {
       const u = new URL(finalUrl)
-      u.searchParams.set('password', netPassword.value)
+      u.searchParams.set('password', enteredPw)
       finalUrl = u.toString()
     } catch {
       error.value = 'Net panel URL must be a valid ws:// or wss:// URL'
       return
     }
   }
+
+  // Remember most recent values (only on valid submit) for next time connect UI shows.
+  try {
+    localStorage.setItem('avc:lastNetUrl', enteredUrl)
+    localStorage.setItem('avc:lastNetPw', enteredPw)
+  } catch {}
+
   window.location.search = new URLSearchParams({ net: finalUrl }).toString()
 }
 function submitTab() {
-  window.location.search = new URLSearchParams({ tab: tabUrl.value }).toString()
+  const url = tabUrl.value.trim()
+  try {
+    localStorage.setItem('avc:lastTabUrl', url)
+  } catch {}
+  window.location.search = new URLSearchParams({ tab: url }).toString()
 }
 function backToConnect() {
   window.location.search = ''

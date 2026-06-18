@@ -1,4 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import { createServer as createHttpsServer } from 'node:https';
+import { readFileSync } from 'node:fs';
 import { Transports, Messages } from '@av-controls/protocol';
 type RootSpecification = Messages.RootSpecification;
 const {
@@ -47,8 +49,21 @@ function verbose(message: string, data?: unknown) {
 // serve websocket
 const parsedWsPort = Number.parseInt(process.env.WS_PORT ?? '', 10);
 const wsPort = Number.isFinite(parsedWsPort) ? parsedWsPort : 8080;
-const wss = new WebSocketServer({ port: wsPort });
-log(`🚀 WebSocket server running on port ${wsPort}`);
+// TLS (wss) when CERT_FILE + KEY_FILE are set — required so an HTTPS controller
+// page can connect without mixed-content errors. Plain ws otherwise (dev). Uses
+// the same self-signed cert as the controller's HTTPS static server.
+const certFile = process.env.CERT_FILE;
+const keyFile = process.env.KEY_FILE;
+let wss: WebSocketServer;
+if (certFile && keyFile) {
+  const httpsServer = createHttpsServer({ cert: readFileSync(certFile), key: readFileSync(keyFile) });
+  httpsServer.listen(wsPort);
+  wss = new WebSocketServer({ server: httpsServer });
+  log(`🔒 Secure WebSocket server (wss) running on port ${wsPort}`);
+} else {
+  wss = new WebSocketServer({ port: wsPort });
+  log(`🚀 WebSocket server running on port ${wsPort}`);
+}
 let shuttingDown = false;
 
 // Optional credential protection for exhibition mode. Senders (controllers) and
