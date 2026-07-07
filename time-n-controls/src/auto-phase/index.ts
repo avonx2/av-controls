@@ -18,15 +18,15 @@ export { AutoPhaseClock } from './phase-clock'
 export interface AutoPhaseConfig {
   /** Path to the ONNX model file (in artwork's public directory) */
   modelPath: string
+  /** Path to the model metadata JSON file (in artwork's public directory) */
+  metaPath?: string
   /** Menu control spec - artwork defines position/size, AutoPhase manages options */
   menuSpec: Controls.Menu.Spec
   /** LocalStorage key for device preference */
   storageKey?: string
   /**
-   * Model hyperparameters as a parsed {@link ModelMeta}. Omit to build one from
-   * the individual fields below / their defaults. (A resolved object is required
-   * rather than a meta.json URL because the AudioContext sample rate and worklet
-   * frame size must be known synchronously when capture starts.)
+   * Model hyperparameters as a parsed {@link ModelMeta}. Prefer `metaPath` for
+   * current dance-ai models so metadata is loaded alongside the ONNX file.
    */
   meta?: ModelMeta
   /** Enable dance-ai causal level normalization (default true). */
@@ -93,6 +93,7 @@ export class AutoPhase implements PhaseClock {
   private readonly syntheticPhaseRate = 0.5 // 4/4 @ 120 BPM => 0.5 bars/sec
 
   private estimator: DancePhaseEstimator | null = null
+  private modelLoadPromise: Promise<void>
   private phaseClock: AutoPhaseClock
 
   private audioContext: AudioContext | null = null
@@ -118,7 +119,7 @@ export class AutoPhase implements PhaseClock {
   private modelLoadGeneration = 0
 
   private readonly modelPath: string
-  private readonly meta: ModelMeta
+  private readonly modelMeta: ModelMeta | string
   private readonly normalize: boolean
   private readonly storageKey: string
   private readonly onAudioFrameDropped?: () => void
@@ -129,9 +130,8 @@ export class AutoPhase implements PhaseClock {
     this.normalize = config.normalize ?? true
     this.onAudioFrameDropped = config.onAudioFrameDropped
 
-    // Resolve model hyperparameters. Defaults match the bundled GRU checkpoint
-    // (sweep_L2_H512_M96): 2 layers, hidden 512, 96 mels @ 24kHz.
-    this.meta = config.meta ?? {
+    // Defaults are kept for older call sites that do not provide a .meta.json.
+    this.modelMeta = config.metaPath ?? config.meta ?? {
       model_type: config.modelType ?? 'phase_gru_mel',
       samplerate: config.sampleRate ?? 24000,
       frame_size: config.frameSize ?? 400,
@@ -160,7 +160,7 @@ export class AutoPhase implements PhaseClock {
     }
 
     // Start loading the model
-    this.loadModel()
+    this.modelLoadPromise = this.loadModel()
   }
 
   private logDroppedAudioFrames() {
@@ -229,7 +229,7 @@ export class AutoPhase implements PhaseClock {
       const estimator = await DancePhaseEstimator.create({
         ort,
         model: this.modelPath,
-        meta: this.meta,
+        meta: this.modelMeta,
         normalize: this.normalize,
       })
       if (this.disposed || loadGeneration !== this.modelLoadGeneration) {
@@ -327,9 +327,15 @@ export class AutoPhase implements PhaseClock {
 
   private async startCapture(deviceId: string) {
     try {
+      await this.modelLoadPromise
+      if (!this.estimator) {
+        throw new Error('model is not loaded')
+      }
+      const meta = this.estimator.meta
+
       // Create audio context at target sample rate if not exists
       if (!this.audioContext) {
-        this.audioContext = new AudioContext({ sampleRate: this.meta.samplerate })
+        this.audioContext = new AudioContext({ sampleRate: meta.samplerate })
       }
 
       // Resume if suspended
@@ -351,7 +357,7 @@ export class AutoPhase implements PhaseClock {
       this.currentStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: { exact: deviceId },
-          sampleRate: { ideal: this.meta.samplerate },
+          sampleRate: { ideal: meta.samplerate },
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false
@@ -364,7 +370,7 @@ export class AutoPhase implements PhaseClock {
       // Create or reuse worklet node
       if (!this.workletNode) {
         this.workletNode = new AudioWorkletNode(this.audioContext, AUDIO_PROCESSOR_NAME, {
-          processorOptions: { frameSize: this.meta.frame_size }
+          processorOptions: { frameSize: meta.frame_size }
         })
 
         this.workletNode.port.onmessage = (event) => {
@@ -459,10 +465,10 @@ export class AutoPhase implements PhaseClock {
   }
 
   tick(deltaS?: number): void {
-    this.phaseClock.tick(deltaS)
     if (this.enabled && this.inputMode === 'simulate') {
-      this.phaseClock.advance(this.syntheticPhaseRate)
+      this.phaseClock.setPhaseRate(this.syntheticPhaseRate)
     }
+    this.phaseClock.tick(deltaS)
   }
 
   registerQueue(queue: PhaseQueue): void {
@@ -593,10 +599,10 @@ export class AutoPhase implements PhaseClock {
    * Feed a silence frame (for background tab or no audio).
    */
   feedSilence() {
-    if (!this.modelLoaded || !this.enabled) return
+    if (!this.modelLoaded || !this.enabled || !this.estimator) return
 
     // Process silence through the estimator
-    const silenceFrame = new Float32Array(this.meta.frame_size)
+    const silenceFrame = new Float32Array(this.estimator.meta.frame_size)
     this.enqueueAudioFrame(silenceFrame)
   }
 

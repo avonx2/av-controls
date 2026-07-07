@@ -48,14 +48,14 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
       wrappedDelta += 1
     }
 
-    // Only allow forward corrections. Negative wrapped deltas are interpreted
-    // as stale/jittery observations from the previous part of the cycle.
-    const forwardError = Math.min(
+    // Clamp correction step to prevent extreme jumps on single noisy frames.
+    // By allowing both positive and negative corrections, we avoid rectification drift.
+    const correctionStep = Math.min(
       this.maxPhaseStep,
-      Math.max(0, wrappedDelta),
+      Math.max(-this.maxPhaseStep, wrappedDelta),
     )
     const correctionAlpha = 1 - this.phaseSmoothing * 0.95
-    this.unwrappedPhase += forwardError * correctionAlpha
+    this.unwrappedPhase += correctionStep * correctionAlpha
     this.phase = ((this.unwrappedPhase % 1) + 1) % 1
   }
 
@@ -98,9 +98,11 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
     this.lastTickTime = now
     this.seconds += this.tickDeltaS
 
-    const rateInfluence = this.phaseSmoothing
-    if (this.phaseRate > 0 && rateInfluence > 0) {
-      this.unwrappedPhase += this.tickDeltaS * this.phaseRate * rateInfluence
+    // Always advance the clock at the estimated tempo (phaseRate).
+    // The phaseSmoothing parameter controls the responsiveness of phase corrections,
+    // not whether the clock actually progresses. This avoids micro-stuttering.
+    if (this.phaseRate > 0) {
+      this.unwrappedPhase += this.tickDeltaS * this.phaseRate
       this.phase = ((this.unwrappedPhase % 1) + 1) % 1
     }
 
@@ -112,9 +114,7 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
    * Useful for synthetic/fallback phase generation.
    */
   advance(rateCyclesPerSecond: number) {
-    const deltaPhase = this.tickDeltaS * rateCyclesPerSecond
-    this.unwrappedPhase += deltaPhase
-    this.phase = ((this.unwrappedPhase % 1) + 1) % 1
+    // Set the phase rate so subsequent tick() calls will advance the clock at this tempo.
     this.phaseRate = rateCyclesPerSecond
     this.smoothedPhaseRate = rateCyclesPerSecond
   }
