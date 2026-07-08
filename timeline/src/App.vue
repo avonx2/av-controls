@@ -55,7 +55,7 @@ type PendingProjectCompatibilityAction = {
   proceed: () => Promise<void>
 }
 
-const wsUrl = ref('ws://localhost:8080')
+const wsUrl = ref(window.location.protocol === 'https:' ? 'wss://localhost:8080' : 'ws://localhost:8080')
 const fps = ref(60)
 const rafNow = ref(performance.now())
 let rafId = 0

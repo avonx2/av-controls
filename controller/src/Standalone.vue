@@ -15,16 +15,17 @@ import { ref, shallowRef, onMounted, onBeforeUnmount } from 'vue'
 import Controller from './components/Controller.vue'
 import { Transports } from '@av-controls/protocol'
 
-// Defaults used only when nothing is remembered in localStorage yet.
-// When the page is loaded with no ?net / ?tab get params, we always show the
-// connect UI form (prefilled from localStorage if available) and do not auto-connect.
-const DEFAULT_WS = 'ws://localhost:8080'
-const DEFAULT_TAB = 'http://localhost:5173'
+const DEFAULT_WS = window.location.protocol === 'https:' ? 'wss://localhost:8080' : 'ws://localhost:8080'
+const DEFAULT_TAB = window.location.protocol === 'https:' ? 'https://localhost:5173' : 'http://localhost:5173'
 
 function getRememberedValues() {
   try {
+    let netUrl = localStorage.getItem('avc:lastNetUrl') || DEFAULT_WS
+    if (window.location.protocol === 'https:' && netUrl.startsWith('ws://')) {
+      netUrl = netUrl.replace('ws://', 'wss://')
+    }
     return {
-      netUrl: localStorage.getItem('avc:lastNetUrl') || DEFAULT_WS,
+      netUrl,
       netPassword: localStorage.getItem('avc:lastNetPw') ?? '',
       tabUrl: localStorage.getItem('avc:lastTabUrl') || DEFAULT_TAB,
     }
@@ -111,10 +112,13 @@ function connectTab(url: string) {
 
 onMounted(() => {
   const params = new URLSearchParams(window.location.search)
-  const net = params.get('net')
+  let net = params.get('net')
   const tab = params.get('tab')
   let pw = params.get('password') || params.get('pw') || ''
   if (net) {
+    if (window.location.protocol === 'https:' && net.startsWith('ws://')) {
+      net = net.replace('ws://', 'wss://')
+    }
     try {
       const u = new URL(net)
       const pwInUrl = u.searchParams.get('password') || u.searchParams.get('pw') || ''

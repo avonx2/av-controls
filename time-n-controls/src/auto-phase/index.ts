@@ -49,6 +49,8 @@ export interface AutoPhaseConfig {
   numLayers?: number
   /** Model type string; `phase_lstm_mel` enables LSTM cell state (default `phase_gru_mel`). Ignored if `meta` is provided. */
   modelType?: string
+  /** Normalizer floor to cap max gain (default 0.001 for higher sensitivity to quiet inputs). */
+  normalizerFloor?: number
   /** Called when an incoming audio frame is dropped in favor of a newer one */
   onAudioFrameDropped?: () => void
 }
@@ -121,6 +123,7 @@ export class AutoPhase implements PhaseClock {
   private readonly modelPath: string
   private readonly modelMeta: ModelMeta | string
   private readonly normalize: boolean
+  private readonly normalizerFloor: number
   private readonly storageKey: string
   private readonly onAudioFrameDropped?: () => void
 
@@ -128,6 +131,7 @@ export class AutoPhase implements PhaseClock {
     this.modelPath = config.modelPath
     this.storageKey = config.storageKey ?? 'avonx-autophase-device'
     this.normalize = config.normalize ?? true
+    this.normalizerFloor = config.normalizerFloor ?? 0.001
     this.onAudioFrameDropped = config.onAudioFrameDropped
 
     // Defaults are kept for older call sites that do not provide a .meta.json.
@@ -231,6 +235,7 @@ export class AutoPhase implements PhaseClock {
         model: this.modelPath,
         meta: this.modelMeta,
         normalize: this.normalize,
+        normalizerFloor: this.normalizerFloor,
       })
       if (this.disposed || loadGeneration !== this.modelLoadGeneration) {
         estimator.dispose()
@@ -409,13 +414,29 @@ export class AutoPhase implements PhaseClock {
       return
     }
 
+    // Diagnostic logging to inspect quiet mic levels and normalizer gains
+    if (Math.random() < 0.01) { // Log 1% of frames to avoid flooding (~once per second)
+      let frameMax = 0
+      for (let i = 0; i < audioFrame.length; i++) {
+        const val = Math.abs(audioFrame[i]!)
+        if (val > frameMax) frameMax = val
+      }
+      const normalizerPeak = (this.estimator as any).normalizer?.peak ?? 0
+      const normalizerFloor = (this.estimator as any).normalizer?.floor ?? 0.01
+      console.log(`[AutoPhase] Audio peak: ${frameMax.toFixed(5)}, normalizer running peak: ${normalizerPeak.toFixed(5)} (floor: ${normalizerFloor})`)
+    }
+
     try {
       // dance-ai buffers samples internally and returns one estimate per
       // completed frame (sin/cos phase decode + recurrent state are handled
       // inside the estimator).
       const estimates = await this.estimator.feed(audioFrame)
       for (const estimate of estimates) {
-        this.phaseClock.updateFromInference(estimate.phase, estimate.barDurationS)
+        this.phaseClock.updateFromInference(
+          estimate.phase,
+          estimate.barDurationS,
+          estimate.expectedPhaseError
+        )
       }
     } catch (err) {
       console.error('[AutoPhase] Inference error:', err)

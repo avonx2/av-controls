@@ -7,9 +7,11 @@ import { PhaseClock, BasePhaseClockImpl } from '../phase-clock'
 export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
   private phase = 0
   private unwrappedPhase = 0
+  private targetUnwrappedPhase = 0
   private phaseRate = 0
   private smoothedPhaseRate = 0
   private phaseSmoothing = 0.5
+  private needsSnap = true
 
   // EMA smoothing factor for phase rate (~100ms at 60fps)
   // alpha = 1 - exp(-dt / tau), for tau=0.1s and dt=1/60: alpha ≈ 0.154
@@ -25,8 +27,9 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
    * Update phase from model inference output.
    * @param rawPhase Decoded phase [0, 1) from atan2(sin, cos)
    * @param barDurationS Predicted bar duration in seconds
+   * @param expectedPhaseError Expected absolute phase error in bars (used for confidence weighting)
    */
-  updateFromInference(rawPhase: number, barDurationS: number) {
+  updateFromInference(rawPhase: number, barDurationS: number, expectedPhaseError?: number) {
     const phaseRateCyclesPerSec = Number.isFinite(barDurationS) && barDurationS > 1e-4
       ? 1 / barDurationS
       : 0
@@ -38,7 +41,7 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
     }
     this.phaseRate = this.smoothedPhaseRate
 
-    const currentFrac = ((this.unwrappedPhase % 1) + 1) % 1
+    const currentFrac = ((this.targetUnwrappedPhase % 1) + 1) % 1
     let wrappedDelta = rawPhase - currentFrac
 
     // Fold into [-0.5, 0.5) so wrap-around is treated as the shortest path.
@@ -54,9 +57,24 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
       this.maxPhaseStep,
       Math.max(-this.maxPhaseStep, wrappedDelta),
     )
-    const correctionAlpha = 1 - this.phaseSmoothing * 0.95
-    this.unwrappedPhase += correctionStep * correctionAlpha
-    this.phase = ((this.unwrappedPhase % 1) + 1) % 1
+    const baseCorrectionAlpha = 1 - this.phaseSmoothing * 0.95
+
+    // Weight correction by model confidence (inverse of expected phase error).
+    // expectedPhaseError is in [0, 0.5]; values >= 0.35 are treated as low confidence.
+    let confidence = 1.0
+    if (expectedPhaseError !== undefined && Number.isFinite(expectedPhaseError)) {
+      confidence = Math.max(0, 1 - expectedPhaseError / 0.35)
+      confidence = confidence * confidence // Steepen roll-off
+    }
+
+    const correctionAlpha = baseCorrectionAlpha * confidence
+    this.targetUnwrappedPhase += correctionStep * correctionAlpha
+
+    if (this.needsSnap) {
+      this.unwrappedPhase = this.targetUnwrappedPhase
+      this.phase = ((this.unwrappedPhase % 1) + 1) % 1
+      this.needsSnap = false
+    }
   }
 
   /**
@@ -98,12 +116,28 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
     this.lastTickTime = now
     this.seconds += this.tickDeltaS
 
-    // Always advance the clock at the estimated tempo (phaseRate).
-    // The phaseSmoothing parameter controls the responsiveness of phase corrections,
-    // not whether the clock actually progresses. This avoids micro-stuttering.
     if (this.phaseRate > 0) {
-      this.unwrappedPhase += this.tickDeltaS * this.phaseRate
-      this.phase = ((this.unwrappedPhase % 1) + 1) % 1
+      // Symmetrically advance targetUnwrappedPhase
+      this.targetUnwrappedPhase += this.tickDeltaS * this.phaseRate
+
+      if (this.needsSnap) {
+        this.unwrappedPhase = this.targetUnwrappedPhase
+        this.phase = ((this.unwrappedPhase % 1) + 1) % 1
+        this.needsSnap = false
+      } else {
+        // Proportional control of the phase error (PLL slewing)
+        const phaseError = this.targetUnwrappedPhase - this.unwrappedPhase
+        const K = 3.0
+        
+        // Slew speed = base estimated rate + correction based on phase error
+        const targetPhaseAdvancement = this.phaseRate + phaseError * K
+
+        // Never allow less than 0 as the phase advancement (effective rate) to guarantee monotonic progression
+        const effectiveRate = Math.max(0, targetPhaseAdvancement)
+
+        this.unwrappedPhase += this.tickDeltaS * effectiveRate
+        this.phase = ((this.unwrappedPhase % 1) + 1) % 1
+      }
     }
 
     this.notifyQueues()
@@ -130,8 +164,10 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
     const nextCycleBoundary = Math.ceil(this.unwrappedPhase)
     this.phase = 0
     this.unwrappedPhase = nextCycleBoundary
+    this.targetUnwrappedPhase = nextCycleBoundary
     this.phaseRate = 0
     this.smoothedPhaseRate = 0
+    this.needsSnap = true
   }
 
   /**
@@ -140,6 +176,8 @@ export class AutoPhaseClock extends BasePhaseClockImpl implements PhaseClock {
   setPhase(phase: number) {
     this.phase = phase % 1
     this.unwrappedPhase = Math.floor(this.unwrappedPhase) + this.phase
+    this.targetUnwrappedPhase = this.unwrappedPhase
+    this.needsSnap = true
   }
 
   /**
