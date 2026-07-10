@@ -32,5 +32,11 @@
       "color": "#90a4ae",
       "ongoing": false
     }
-  ]
+  ],
+  "dataModelVersion": 1,
+  "phaseCursors": {},
+  "phaseActiveLevel": 0,
+  "rootPhaseIds": [],
+  "linkedRepos": [],
+  "repoId": "e45be18c-5b99-492f-a6d0-0afdeafd0f27"
 }

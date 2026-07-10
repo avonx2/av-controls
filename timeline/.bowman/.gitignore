@@ -2,3 +2,5 @@ vectors.json
 cache.db
 semantic-graph.json
 runtime/
+
+secrets.json
