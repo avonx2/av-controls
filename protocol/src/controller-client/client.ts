@@ -171,7 +171,9 @@ export class ControllerClient {
   }
 
   private handleControlUpdate(update: ControlUpdate) {
-    if (this.options.autoHandleUpdates ?? true) {
+    const isOwnControllerEcho = update.origin.kind === 'controller'
+      && update.origin.clientId === this.clientId;
+    if ((this.options.autoHandleUpdates ?? true) && !isOwnControllerEcho) {
       if (this.rootSender) {
         dispatchUpdateTreeToSender(this.rootSender, update.update);
       }
