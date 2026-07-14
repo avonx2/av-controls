@@ -612,10 +612,11 @@ export class Receiver extends WebSocketClient {
   }
 
   private makeRootSpecification(id: string, rootReceiver: Base.Receiver) {
+    const currentState = rootReceiver.getState()
     return new AvControlsMessages.RootSpecification(
       id,
       rootReceiver.spec,
-      rootReceiver.getState(),
+      currentState ?? new Base.State(),
       this.stateInitializedByPanel.get(id) ?? false,
     )
   }

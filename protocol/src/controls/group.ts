@@ -87,10 +87,22 @@ export class Receiver extends Base.Receiver {
     }
   }
 
-  getState(): State {
+  getState(context?: Base.StateSnapshotContext | string | null): State | undefined {
+    const ownContext = Base.resolveStateSnapshotContext(this.spec, context)
     const states: GroupState = {};
     for (const id in this.controls) {
-      states[id] = this.controls[id]!.getState();
+      const control = this.controls[id]!
+      const childContext = Base.resolveStateSnapshotContext(control.spec, ownContext)
+      if (!childContext.included && !Base.hasReceiverStateChildren(control)) {
+        continue
+      }
+      const childState = control.getState(childContext)
+      if (childState !== undefined) {
+        states[id] = childState
+      }
+    }
+    if (!ownContext.included && Object.keys(states).length === 0) {
+      return undefined
     }
     return new State(states);
   }
@@ -143,10 +155,22 @@ export class Sender extends Base.Sender {
     }
   }
 
-  getState() {
+  getState(context?: Base.StateSnapshotContext | string | null): State | undefined {
+    const ownContext = Base.resolveStateSnapshotContext(this.spec, context)
     const states: GroupState = {}
     for (const id in this.senders) {
-      states[id] = this.senders[id]!.getState()
+      const sender = this.senders[id]!
+      const childContext = Base.resolveStateSnapshotContext(sender.spec, ownContext)
+      if (!childContext.included && !Base.hasSenderStateChildren(sender)) {
+        continue
+      }
+      const childState = sender.getState(childContext)
+      if (childState !== undefined) {
+        states[id] = childState
+      }
+    }
+    if (!ownContext.included && Object.keys(states).length === 0) {
+      return undefined
     }
     return new State(states)
   }

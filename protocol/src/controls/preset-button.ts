@@ -16,6 +16,7 @@ export class Spec extends Base.Spec {
   constructor(
     baseArgs: Base.Args,
     public stencil: any,
+    public presetKey: string = baseArgs.name,
   ) {
 		super(baseArgs);
 	}
@@ -63,7 +64,10 @@ export class Sender extends Base.Sender {
 
   save(presetId: string) {
     if(this.parent) {
-      const state = this.parent.getState()
+      const state = this.parent.getState(this.spec.presetKey)
+      if (state === undefined) {
+        return
+      }
       console.log(`saving preset ${presetId}`, state)
       this.savedParentStates[presetId] = state
     }
@@ -121,5 +125,27 @@ export class Sender extends Base.Sender {
 
   getNames() {
     return Object.keys(this.savedParentStates)
+  }
+
+  getState(context?: Base.StateSnapshotContext | string | null): State | undefined {
+    const ownContext = Base.resolveStateSnapshotContext(this.spec, context)
+    if (ownContext.presetKey !== null || !ownContext.included) {
+      return undefined
+    }
+    return new State(this.savedParentStates)
+  }
+
+  setState(state: State): void {
+    if (state.savedParentStates && typeof state.savedParentStates === 'object') {
+      this.savedParentStates = state.savedParentStates
+    }
+  }
+}
+
+export class State extends Base.State {
+  constructor(
+    public savedParentStates: {[id: string]: Base.State},
+  ) {
+    super()
   }
 }

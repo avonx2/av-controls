@@ -1,5 +1,5 @@
 <script setup lang=ts>
-import { computed, inject } from 'vue'
+import { computed, inject, ref, type Ref } from 'vue'
 import { shade } from 'polished'
 import { Controls } from '@av-controls/protocol'
 
@@ -12,6 +12,7 @@ const props = defineProps({
 })
 
 const openModal = inject<(modal: Controls.Modal.Sender) => void>('openModal')
+const layoutEditMode = inject<Ref<boolean>>('layoutEditMode', ref(false))
 
 const color = computed(() => {
   const spec = props.modal.spec
@@ -29,6 +30,9 @@ const basisStyle = computed(() => {
 })
 
 function activate(e: Event) {
+  if (layoutEditMode.value) {
+    return
+  }
   if (openModal) {
     openModal(props.modal)
   }

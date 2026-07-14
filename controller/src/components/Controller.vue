@@ -258,12 +258,18 @@ onMounted(() => {
   controllerClient.onRootSpec = handleRootSpecification
   controllerClient.onControlUpdate = ({ update }) => {
     if (update.origin.kind !== 'artwork' && rootSender.value && controlledName.value) {
-      scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
+      const state = rootSender.value.getState()
+      if (state) {
+        scheduleControlStateSnapshotSave(controlledName.value, state)
+      }
     }
   }
   controllerClient.onSignal = () => {
     if (rootSender.value && controlledName.value) {
-      scheduleControlStateSnapshotSave(controlledName.value, rootSender.value.getState())
+      const state = rootSender.value.getState()
+      if (state) {
+        scheduleControlStateSnapshotSave(controlledName.value, state)
+      }
     }
   }
   controllerClient.onUnknownMessage = (message) => {

@@ -148,7 +148,10 @@ export class ControllerClient {
         this.onError?.(error);
       }
     } else if (rootSpec.stateInitialized) {
-      this.options.onInitializedState?.(rootSpec.name, rootSender.getState());
+      const state = rootSender.getState()
+      if (state) {
+        this.options.onInitializedState?.(rootSpec.name, state);
+      }
     }
 
     if (generation !== this.generation) {

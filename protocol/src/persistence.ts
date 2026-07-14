@@ -232,7 +232,10 @@ export class StatePersistence {
 
   persistReceiverState(rootReceiver: Base.Receiver): void {
     walkReceivers(rootReceiver, [], (path, receiver) => {
-      this.scheduleWrite(path.join('/'), receiver.getState())
+      const state = receiver.getState()
+      if (state) {
+        this.scheduleWrite(path.join('/'), state)
+      }
     })
   }
 

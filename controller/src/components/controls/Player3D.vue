@@ -430,6 +430,7 @@ watch(() => props.player3d.rotation, () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: visible;
 }
 
 .player3d-basis.captured {
@@ -437,7 +438,7 @@ watch(() => props.player3d.rotation, () => {
 }
 
 .player3d-label {
-  padding: 0 2.4rem;
+  padding: 0 0.8rem;
   line-height: 1.2;
 }
 
@@ -452,26 +453,26 @@ watch(() => props.player3d.rotation, () => {
 }
 
 .side-arrow.top {
-  top: 0.4rem;
+  top: 0;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
 }
 
 .side-arrow.right {
   top: 50%;
-  right: 0.5rem;
-  transform: translateY(-50%);
+  right: 0;
+  transform: translate(50%, -50%);
 }
 
 .side-arrow.bottom {
-  bottom: 0.4rem;
+  bottom: 0;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, 50%);
 }
 
 .side-arrow.left {
   top: 50%;
-  left: 0.5rem;
-  transform: translateY(-50%);
+  left: 0;
+  transform: translate(-50%, -50%);
 }
 </style>

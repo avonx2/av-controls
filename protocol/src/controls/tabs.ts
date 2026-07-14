@@ -58,10 +58,25 @@ export class Receiver extends Group.Receiver {
     );
   }
 
-  getState(): State {
+  getState(context?: Base.StateSnapshotContext | string | null): Group.State | undefined {
+    const ownContext = Base.resolveStateSnapshotContext(this.spec, context)
     const childStates: {[id: string]: Base.State} = {};
     for (const id in this.controls) {
-      childStates[id] = this.controls[id]!.getState();
+      const control = this.controls[id]!
+      const childContext = Base.resolveStateSnapshotContext(control.spec, ownContext)
+      if (!childContext.included && !Base.hasReceiverStateChildren(control)) {
+        continue
+      }
+      const childState = control.getState(childContext)
+      if (childState !== undefined) {
+        childStates[id] = childState
+      }
+    }
+    if (!ownContext.included && Object.keys(childStates).length === 0) {
+      return undefined
+    }
+    if (!ownContext.included) {
+      return new Group.State(childStates)
     }
     return new State(this.activeId, childStates);
   }
@@ -90,10 +105,25 @@ export class Sender extends Group.Sender {
     this.activeId = spec.initialActiveId
   }
 
-  getState(): State {
+  getState(context?: Base.StateSnapshotContext | string | null): Group.State | undefined {
+    const ownContext = Base.resolveStateSnapshotContext(this.spec, context)
     const childStates: {[id: string]: Base.State} = {};
     for (const id in this.senders) {
-      childStates[id] = this.senders[id]!.getState();
+      const sender = this.senders[id]!
+      const childContext = Base.resolveStateSnapshotContext(sender.spec, ownContext)
+      if (!childContext.included && !Base.hasSenderStateChildren(sender)) {
+        continue
+      }
+      const childState = sender.getState(childContext)
+      if (childState !== undefined) {
+        childStates[id] = childState
+      }
+    }
+    if (!ownContext.included && Object.keys(childStates).length === 0) {
+      return undefined
+    }
+    if (!ownContext.included) {
+      return new Group.State(childStates)
     }
     return new State(this.activeId, childStates);
   }

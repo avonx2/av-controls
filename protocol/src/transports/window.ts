@@ -146,10 +146,11 @@ export class Receiver {
   }
 
   private sendRootSpecification() {
+    const currentState = this.rootReceiver.getState()
     this.send(new AvControlsMessages.RootSpecification(
       this.name,
       this.rootReceiver.spec,
-      this.rootReceiver.getState(),
+      currentState ?? new Base.State(),
       this.stateInitialized,
     ))
   }

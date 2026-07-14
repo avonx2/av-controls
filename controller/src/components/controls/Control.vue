@@ -57,7 +57,7 @@ function onContextMenu(event: MouseEvent) {
 
 const type = computed(() => props.control.spec.type)
 const isContainerControl = computed(() =>
-  type.value === 'group' || type.value === 'tabs' || type.value === 'modal'
+  type.value === 'group' || type.value === 'tabs'
 )
 
 const layoutX = ref(props.control.spec.x)
