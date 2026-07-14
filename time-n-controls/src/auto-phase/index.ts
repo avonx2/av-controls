@@ -1,11 +1,10 @@
-import * as ort from 'onnxruntime-web'
 import { Controls } from '@av-controls/protocol'
 import {
-  DancePhaseEstimator,
   createAudioProcessorUrl,
   AUDIO_PROCESSOR_NAME,
   type ModelMeta,
 } from 'dance-ai'
+import type { AutoPhaseInferenceWorkerResponse } from './inference-worker'
 import { AutoPhaseClock } from './phase-clock'
 import { PhaseClock } from '../phase-clock'
 import { PhaseQueue } from '../phase-queue'
@@ -14,6 +13,9 @@ import { PhaseQueue } from '../phase-queue'
 export { MelFrontend, createAudioProcessorUrl, AUDIO_PROCESSOR_NAME } from 'dance-ai'
 export type { ModelMeta, FrameEstimate } from 'dance-ai'
 export { AutoPhaseClock } from './phase-clock'
+
+export type AutoPhaseLogLevel = 'debug' | 'info' | 'warn' | 'error'
+export type AutoPhaseLogger = (level: AutoPhaseLogLevel, message: string, data?: unknown) => void
 
 export interface AutoPhaseConfig {
   /** Path to the ONNX model file (in artwork's public directory) */
@@ -53,6 +55,8 @@ export interface AutoPhaseConfig {
   normalizerFloor?: number
   /** Called when an incoming audio frame is dropped in favor of a newer one */
   onAudioFrameDropped?: () => void
+  /** Optional logging sink for AutoPhase diagnostics. */
+  logger?: AutoPhaseLogger
 }
 
 export type AutoPhaseInputMode = 'disabled' | 'audio device input' | 'simulate'
@@ -94,9 +98,12 @@ export class AutoPhase implements PhaseClock {
   private readonly grantAccessLabel = 'Grant mic access'
   private readonly syntheticPhaseRate = 0.5 // 4/4 @ 120 BPM => 0.5 bars/sec
 
-  private estimator: DancePhaseEstimator | null = null
   private modelLoadPromise: Promise<void>
   private phaseClock: AutoPhaseClock
+  private inferenceWorker: Worker | null = null
+  private resolveModelLoad: (() => void) | null = null
+  private rejectModelLoad: ((err: unknown) => void) | null = null
+  private resolveCurrentInference: (() => void) | null = null
 
   private audioContext: AudioContext | null = null
   private workletNode: AudioWorkletNode | null = null
@@ -107,6 +114,7 @@ export class AutoPhase implements PhaseClock {
   private devices: AudioDeviceInfo[] = []
   private permissionGranted = false
   private modelLoaded = false
+  private loadedModelMeta: ModelMeta | null = null
   private isCapturing = false
   private audioLevel = 0
   private phaseOffsetMs = 0
@@ -118,7 +126,6 @@ export class AutoPhase implements PhaseClock {
   private droppedAudioFrames = 0
   private lastDropLogAtMs = -Infinity
   private disposed = false
-  private modelLoadGeneration = 0
 
   private readonly modelPath: string
   private readonly modelMeta: ModelMeta | string
@@ -126,6 +133,7 @@ export class AutoPhase implements PhaseClock {
   private readonly normalizerFloor: number
   private readonly storageKey: string
   private readonly onAudioFrameDropped?: () => void
+  private readonly logger?: AutoPhaseLogger
 
   constructor(config: AutoPhaseConfig) {
     this.modelPath = config.modelPath
@@ -133,6 +141,7 @@ export class AutoPhase implements PhaseClock {
     this.normalize = config.normalize ?? true
     this.normalizerFloor = config.normalizerFloor ?? 0.001
     this.onAudioFrameDropped = config.onAudioFrameDropped
+    this.logger = config.logger
 
     // Defaults are kept for older call sites that do not provide a .meta.json.
     this.modelMeta = config.metaPath ?? config.meta ?? {
@@ -176,7 +185,7 @@ export class AutoPhase implements PhaseClock {
       return
     }
     this.lastDropLogAtMs = nowMs
-    console.warn(`[AutoPhase] Dropping audio frames, keeping latest only. Dropped=${this.droppedAudioFrames}`)
+    this.log('warn', 'Dropping audio frames, keeping latest only', { dropped: this.droppedAudioFrames })
     this.droppedAudioFrames = 0
   }
 
@@ -200,7 +209,7 @@ export class AutoPhase implements PhaseClock {
 
     try {
       while (frame && !this.isDisposed()) {
-        await this.processFrame(frame)
+        await this.processFrameOnWorker(frame)
         frame = this.pendingAudioFrame
         this.pendingAudioFrame = null
       }
@@ -219,35 +228,95 @@ export class AutoPhase implements PhaseClock {
     return this.disposed
   }
 
-  private async loadModel() {
-    const loadGeneration = ++this.modelLoadGeneration
-    try {
-      // Force the lighter single-threaded WASM runtime, but let
-      // onnxruntime-web/Vite resolve the bundled .wasm asset URL. Overriding
-      // wasmPaths to './' makes ORT fetch a root-relative file that often
-      // resolves to the app fallback HTML instead of the wasm binary.
-      ort.env.wasm.wasmPaths = undefined
-      ort.env.wasm.numThreads = 1
-      ort.env.wasm.proxy = false
-
-      const estimator = await DancePhaseEstimator.create({
-        ort,
-        model: this.modelPath,
-        meta: this.modelMeta,
-        normalize: this.normalize,
-        normalizerFloor: this.normalizerFloor,
-      })
-      if (this.disposed || loadGeneration !== this.modelLoadGeneration) {
-        estimator.dispose()
-        return
-      }
-
-      this.estimator = estimator
-      this.modelLoaded = true
-      console.log('[AutoPhase] Model loaded successfully')
-    } catch (err) {
-      console.error('[AutoPhase] Failed to load model:', err)
+  private loadModel() {
+    this.inferenceWorker = new Worker(new URL('./inference-worker.ts', import.meta.url), { type: 'module' })
+    this.inferenceWorker.onmessage = (event: MessageEvent<AutoPhaseInferenceWorkerResponse>) => {
+      this.handleInferenceWorkerMessage(event.data)
     }
+    this.inferenceWorker.onerror = (event) => {
+      this.handleInferenceWorkerError(new Error(event.message || 'AutoPhase inference worker failed'))
+    }
+    this.inferenceWorker.onmessageerror = () => {
+      this.handleInferenceWorkerError(new Error('AutoPhase inference worker message failed'))
+    }
+
+    const loadPromise = new Promise<void>((resolve, reject) => {
+      this.resolveModelLoad = resolve
+      this.rejectModelLoad = reject
+    })
+
+    this.inferenceWorker.postMessage({
+      type: 'init',
+      modelPath: this.modelPath,
+      modelMeta: this.modelMeta,
+      normalize: this.normalize,
+      normalizerFloor: this.normalizerFloor,
+    })
+
+    return loadPromise
+  }
+
+  private handleInferenceWorkerMessage(message: AutoPhaseInferenceWorkerResponse) {
+    if (this.disposed) {
+      return
+    }
+
+    if (message.type === 'ready') {
+      this.loadedModelMeta = message.meta
+      this.modelLoaded = true
+      this.resolveModelLoad?.()
+      this.resolveModelLoad = null
+      this.rejectModelLoad = null
+      this.log('info', 'Model loaded successfully in inference worker')
+      return
+    }
+
+    if (message.type === 'error') {
+      const err = new Error(message.message)
+      if (!this.modelLoaded) {
+        this.rejectModelLoad?.(err)
+        this.resolveModelLoad = null
+        this.rejectModelLoad = null
+      }
+      this.resolveCurrentInference?.()
+      this.resolveCurrentInference = null
+      this.log('error', 'Inference worker error', err)
+      return
+    }
+
+    for (const estimate of message.estimates) {
+      this.phaseClock.updateFromInference(
+        estimate.phase,
+        estimate.barDurationS,
+        estimate.expectedPhaseError
+      )
+    }
+    this.resolveCurrentInference?.()
+    this.resolveCurrentInference = null
+  }
+
+  private handleInferenceWorkerError(err: Error) {
+    if (!this.modelLoaded) {
+      this.rejectModelLoad?.(err)
+      this.resolveModelLoad = null
+      this.rejectModelLoad = null
+    }
+    this.resolveCurrentInference?.()
+    this.resolveCurrentInference = null
+    this.log('error', 'Inference worker failed', err)
+  }
+
+  private log(level: AutoPhaseLogLevel, message: string, data?: unknown) {
+    if (this.logger) {
+      this.logger(level, message, data)
+      return
+    }
+
+    const fullMessage = `[AutoPhase] ${message}`
+    if (level === 'error') console.error(fullMessage, data ?? '')
+    else if (level === 'warn') console.warn(fullMessage, data ?? '')
+    else if (level === 'info') console.info(fullMessage, data ?? '')
+    else console.debug(fullMessage, data ?? '')
   }
 
   private async handleMenuSelection(index: number) {
@@ -272,7 +341,7 @@ export class AutoPhase implements PhaseClock {
       this.permissionGranted = true
       await this.enumerateDevices()
     } catch (err) {
-      console.error('[AutoPhase] Microphone permission denied:', err)
+      this.log('error', 'Microphone permission denied', err)
       this.menuControl.setDescription('Microphone access denied')
     }
   }
@@ -302,7 +371,7 @@ export class AutoPhase implements PhaseClock {
         }
       }
     } catch (err) {
-      console.error('[AutoPhase] Failed to enumerate devices:', err)
+      this.log('error', 'Failed to enumerate devices', err)
     }
   }
 
@@ -333,10 +402,10 @@ export class AutoPhase implements PhaseClock {
   private async startCapture(deviceId: string) {
     try {
       await this.modelLoadPromise
-      if (!this.estimator) {
+      if (!this.loadedModelMeta) {
         throw new Error('model is not loaded')
       }
-      const meta = this.estimator.meta
+      const meta = this.loadedModelMeta
 
       // Create audio context at target sample rate if not exists
       if (!this.audioContext) {
@@ -387,14 +456,14 @@ export class AutoPhase implements PhaseClock {
       this.streamSource.connect(this.workletNode)
       this.isCapturing = true
 
-      console.log('[AutoPhase] Audio capture started')
+      this.log('info', 'Audio capture started')
     } catch (err) {
-      console.error('[AutoPhase] Failed to start audio capture:', err)
+      this.log('error', 'Failed to start audio capture', err)
       this.isCapturing = false
     }
   }
 
-  private async processFrame(audioFrame: Float32Array) {
+  private async processFrameOnWorker(audioFrame: Float32Array) {
     // Compute RMS audio level
     let sumSquares = 0
     for (let i = 0; i < audioFrame.length; i++) {
@@ -407,40 +476,32 @@ export class AutoPhase implements PhaseClock {
     if (this.inputMode !== 'audio device input') {
       return
     }
-    if (!this.estimator || !this.modelLoaded) {
+    if (!this.inferenceWorker || !this.modelLoaded) {
       return
     }
     if (!this.enabled) {
       return
     }
 
-    // Diagnostic logging to inspect quiet mic levels and normalizer gains
-    if (Math.random() < 0.01) { // Log 1% of frames to avoid flooding (~once per second)
+    // Diagnostic logging to inspect quiet mic levels.
+    if (this.logger && Math.random() < 0.01) { // Log 1% of frames to avoid flooding (~once per second)
       let frameMax = 0
       for (let i = 0; i < audioFrame.length; i++) {
         const val = Math.abs(audioFrame[i]!)
         if (val > frameMax) frameMax = val
       }
-      const normalizerPeak = (this.estimator as any).normalizer?.peak ?? 0
-      const normalizerFloor = (this.estimator as any).normalizer?.floor ?? 0.01
-      console.log(`[AutoPhase] Audio peak: ${frameMax.toFixed(5)}, normalizer running peak: ${normalizerPeak.toFixed(5)} (floor: ${normalizerFloor})`)
+      this.log('debug', 'Audio peak', { peak: Number(frameMax.toFixed(5)) })
     }
 
-    try {
-      // dance-ai buffers samples internally and returns one estimate per
-      // completed frame (sin/cos phase decode + recurrent state are handled
-      // inside the estimator).
-      const estimates = await this.estimator.feed(audioFrame)
-      for (const estimate of estimates) {
-        this.phaseClock.updateFromInference(
-          estimate.phase,
-          estimate.barDurationS,
-          estimate.expectedPhaseError
-        )
+    await new Promise<void>((resolve) => {
+      const worker = this.inferenceWorker
+      if (!worker) {
+        resolve()
+        return
       }
-    } catch (err) {
-      console.error('[AutoPhase] Inference error:', err)
-    }
+      this.resolveCurrentInference = resolve
+      worker.postMessage({ type: 'frame', audioFrame }, [audioFrame.buffer])
+    })
   }
 
   // PhaseClock interface implementation
@@ -502,7 +563,7 @@ export class AutoPhase implements PhaseClock {
 
   reset(): void {
     this.phaseClock.reset()
-    this.estimator?.reset()
+    this.inferenceWorker?.postMessage({ type: 'reset' })
   }
 
   // Public API
@@ -620,10 +681,10 @@ export class AutoPhase implements PhaseClock {
    * Feed a silence frame (for background tab or no audio).
    */
   feedSilence() {
-    if (!this.modelLoaded || !this.enabled || !this.estimator) return
+    if (!this.modelLoaded || !this.enabled || !this.loadedModelMeta) return
 
     // Process silence through the estimator
-    const silenceFrame = new Float32Array(this.estimator.meta.frame_size)
+    const silenceFrame = new Float32Array(this.loadedModelMeta.frame_size)
     this.enqueueAudioFrame(silenceFrame)
   }
 
@@ -632,7 +693,6 @@ export class AutoPhase implements PhaseClock {
    */
   dispose() {
     this.disposed = true
-    this.modelLoadGeneration += 1
     this.modelLoaded = false
     this.stopCapture()
 
@@ -644,17 +704,21 @@ export class AutoPhase implements PhaseClock {
 
     if (this.audioContext) {
       void this.audioContext.close().catch((err: unknown) => {
-        console.warn('[AutoPhase] Failed to close audio context:', err)
+        this.log('warn', 'Failed to close audio context', err)
       })
       this.audioContext = null
     }
 
     this.pendingAudioFrame = null
     this.inferenceInFlight = false
+    this.resolveCurrentInference?.()
+    this.resolveCurrentInference = null
     this.droppedAudioFrames = 0
 
-    this.estimator?.dispose()
-    this.estimator = null
+    this.inferenceWorker?.postMessage({ type: 'dispose' })
+    this.inferenceWorker?.terminate()
+    this.inferenceWorker = null
+    this.loadedModelMeta = null
 
     this.isCapturing = false
   }

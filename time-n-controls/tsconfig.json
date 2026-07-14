@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "es2020",
     "lib": ["es2020", "dom"],
-    "module": "es6",
+    "module": "es2020",
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "outDir": "./dist",
