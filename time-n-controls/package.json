@@ -5,7 +5,10 @@
   "main": "./dist/lib.js",
   "types": "./dist/lib.d.ts",
   "exports": {
-    ".": "./dist/lib.js",
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "default": "./dist/lib.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

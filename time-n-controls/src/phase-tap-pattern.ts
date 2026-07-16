@@ -1,5 +1,6 @@
 import { PhaseClock } from './phase-clock'
 import { PhaseQueue } from './phase-queue'
+import { defaultModulationScale, getClampedModulationScale, type ModulationScale } from './high-level-controls/modulation-scale'
 
 interface LoopEvent {
   down: number  // absolute bar position [0, phasesPerCycle)
@@ -39,6 +40,7 @@ export class PhaseTapPattern {
     private phasesPerCycle = 1,
     lookAheadMs = 70,
     private onProgressUpdate?: (progress: number) => void,
+    private modulationScale: ModulationScale = defaultModulationScale,
   ) {
     this.queue = new PhaseQueue(lookAheadMs)
 
@@ -69,7 +71,7 @@ export class PhaseTapPattern {
 
     this.pressedAtBarPos = ((now % this.phasesPerCycle) + this.phasesPerCycle) % this.phasesPerCycle
     this.pressedVelocity = velocity
-    this.onOn(velocity)
+    this.onOn(this.scaleVelocity(velocity))
   }
 
   release() {
@@ -198,7 +200,7 @@ export class PhaseTapPattern {
           : currentInCycle >= event.down || currentInCycle < event.up
         if (inside && !this.outputIsDown) {
           this.outputIsDown = true
-          this.onOn(event.velocity)
+          this.onOn(this.scaleVelocity(event.velocity))
           break
         }
       }
@@ -230,11 +232,15 @@ export class PhaseTapPattern {
     for (const ev of toFire) {
       if (ev.type === 'on' && !this.outputIsDown) {
         this.outputIsDown = true
-        this.onOn(ev.velocity)
+        this.onOn(this.scaleVelocity(ev.velocity))
       } else if (ev.type === 'off' && this.outputIsDown) {
         this.outputIsDown = false
         this.onOff()
       }
     }
+  }
+
+  private scaleVelocity(velocity: number): number {
+    return velocity * getClampedModulationScale(this.modulationScale)
   }
 }

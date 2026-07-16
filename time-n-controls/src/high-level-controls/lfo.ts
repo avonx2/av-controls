@@ -1,5 +1,6 @@
 import { Controls } from '@av-controls/protocol'
 import { PhaseClock } from '../phase-clock'
+import { defaultModulationScale, getClampedModulationScale, type ModulationScale } from './modulation-scale'
 
 export class LFOControl {
   private valueFader: Controls.Fader.Receiver
@@ -26,7 +27,8 @@ export class LFOControl {
     initialValue = 0.5,
     private min = 0, // Added min
     private max = 1, // Added max
-    color = '#4a9'
+    color = '#4a9',
+    private modulationScale: ModulationScale = defaultModulationScale,
   ) {
     // Layout for main controls: Fader on top (80%), Pad below (20%), full width.
     const faderHeight = height * 0.8
@@ -195,7 +197,7 @@ export class LFOControl {
     osc = Math.pow(Math.max(0, Math.min(1, osc)), power)
     
     const base = this.valueFader.value
-    const range = this.rangeFader.value
+    const range = this.rangeFader.value * getClampedModulationScale(this.modulationScale)
     
     const shapeModeIndex = this.modeSelector.index
     const shapeMode = this.modeSelector.spec.options[shapeModeIndex]
@@ -237,7 +239,8 @@ export class VectorLFOs {
     width: number, height: number,
     initialValues: number[],
     min = 0, max = 1,
-    colors = ['#999', '#999', '#999']
+    colors = ['#999', '#999', '#999'],
+    private modulationScale: ModulationScale = defaultModulationScale,
   ) {
     const componentWidth = width / componentNames.length
 
@@ -252,7 +255,8 @@ export class VectorLFOs {
         initialValues[i]!,
         min,
         max,
-        colors[i]
+        colors[i],
+        this.modulationScale,
       ))
     })
   }

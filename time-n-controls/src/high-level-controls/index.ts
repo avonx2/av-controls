@@ -2,12 +2,14 @@ import { Controls } from '@av-controls/protocol'
 
 import { PhaseClock } from '../phase-clock'
 import { PhaseTapPattern } from '../phase-tap-pattern'
+import { defaultModulationScale, type ModulationScale } from './modulation-scale'
 
 import { solve } from '../linear-solver'
 import { Envelope, LinearDecay } from '../envelopes/index'
 
 export * from './lfo'
 export * from './debounced-fader'
+export * from './modulation-scale'
 
 export class SmoothModKnob {
   private knob: Controls.Knob.Receiver
@@ -141,7 +143,8 @@ export function makePhasePatternPadPair(
   phaseClock: PhaseClock,
   onDown = (_velocity: number) => {},
   onUp = () => {},
-  phasesPerCycle = 1
+  phasesPerCycle = 1,
+  modulationScale: ModulationScale = defaultModulationScale,
 ) {
   const halfHeight = height / 2
 
@@ -155,7 +158,8 @@ export function makePhasePatternPadPair(
     () => { onUp() },
     phasesPerCycle,
     70,
-    (progress) => { recPad.sendValue(progress) }
+    (progress) => { recPad.sendValue(progress) },
+    modulationScale,
   )
 
   recPad.onPress = (velo: number) => { pattern.tap(velo) }
@@ -187,6 +191,7 @@ export class PhaseTapPatternPairWithAmountFaderAndEnvelope {
     phaseClock: PhaseClock,
     envelope: Envelope | undefined,
     phasesPerCycle = 1,
+    modulationScale: ModulationScale = defaultModulationScale,
   ) {
     const buttonsHeight = 30 / 50 * height
     this.amountFader = new Controls.Fader.Receiver(new Controls.Fader.Spec(
@@ -198,7 +203,7 @@ export class PhaseTapPatternPairWithAmountFaderAndEnvelope {
         this.envelope.trigger(v * this.amountFader.value)
       }, () => {
         this.envelope.release()
-      }, phasesPerCycle),
+      }, phasesPerCycle, modulationScale),
       [name + ' amount']: this.amountFader
     }
     // Note: envelope must be compatible with PhaseClock (use Clock wrapper if needed)
