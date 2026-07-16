@@ -12,9 +12,31 @@ import {
   menu, menuActionHandler, 
   textInputTitle, textInputPlaceholder, textInputHandler, 
   confirmTitle, confirmMessage, confirmHandler, 
-  fileInputTitle, fileInputDescription, fileInputHandler, 
+  fileInputTitle, fileInputDescription, fileInputHandler, fileInputMergeOptionLabel,
   type MenuItemSpec 
 } from '../../menu-globals'
+
+import { ADJECTIVES, NOUNS } from './wordlists'
+
+function generateRandomName(): string {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)]
+  return `${adj} ${noun}`
+}
+
+function generateSuggestions(existingNames: string[]): string[] {
+  const suggestions = new Set<string>()
+  const maxAttempts = 100
+  let attempts = 0
+  while (suggestions.size < 3 && attempts < maxAttempts) {
+    const name = generateRandomName()
+    if (!existingNames.includes(name)) {
+      suggestions.add(name)
+    }
+    attempts++
+  }
+  return Array.from(suggestions)
+}
 
 // vue
 const props = defineProps({
@@ -35,51 +57,8 @@ const basisStyle = computed(() => {
 
 function openMenu(_e: Event) {
   const presetNames = props.presetButton.getNames()
-  const items = [
-    {
-      name: 'save',
-      submenu: {
-        name: 'Saving preset as ...', 
-        description: 'Overwrite a setting or save the current presets as a new file',
-        items: [
-          ...presetNames.map(name => ({
-            name: name,
-            action: {
-              type: 'save-as', 
-              name
-            }, 
-            color: '#ea8',
-          })),
-          ...Array.from({length: 8}, (_, i) => i).filter(i => !presetNames.includes(`${i}`)).map(i => ({
-            name: `${i}`,
-            action: {
-              type: 'save-as',
-              name: `${i}`
-            },
-          })),
-          {
-            name: 'individual name', 
-            action: {
-              type: 'save-as-prompt'
-            },
-            color: '#8f8',
-          },
-        ],
-      },
-    },
-    {
-      name: 'import',
-      action: {
-        type: 'import'
-      }
-    },
-    {
-      name: 'export',
-      action: {
-        type: 'export'
-      }
-    },
-  ] as MenuItemSpec[]
+  const suggestions = generateSuggestions(presetNames)
+  const items: MenuItemSpec[] = []
   if(presetNames.length > 0) {
     items.push({
       name: 'load',
@@ -95,21 +74,88 @@ function openMenu(_e: Event) {
         }))
       }
     })
-    items.push({
-      name: 'delete',
-      submenu: {
-        name: 'Delete saved preset', 
-        description: 'Delete a preset. This cannot be undone and the mapping can\'t be loaded anymore afterwards.', 
-        items: presetNames.map(name => ({
-          name, 
+  }
+
+  items.push({
+    name: 'save',
+    submenu: {
+      name: 'Saving preset as ...',
+      description: 'Overwrite a setting or save the current presets as a new file',
+      items: [
+        {
+          name: 'type name',
           action: {
-            type: 'delete', 
+            type: 'save-as-prompt'
+          },
+          color: '#181',
+        },
+        ...suggestions.map(name => ({
+          name,
+          action: {
+            type: 'save-as',
             name
-          }
-        }))
+          },
+          color: '#336',
+        })),
+        ...presetNames.map(name => ({
+          name: name,
+          action: {
+            type: 'save-as',
+            name
+          },
+          color: '#952',
+        })),
+      ],
+    },
+  })
+
+  if(presetNames.length > 0) {
+    items.push(
+      {
+        name: 'delete',
+        submenu: {
+          name: 'Delete saved preset',
+          description: 'Delete a preset. This cannot be undone and the mapping can\'t be loaded anymore afterwards.',
+          items: presetNames.map(name => ({
+            name,
+            action: {
+              type: 'delete',
+              name
+            }
+          }))
+        }
+      },
+      {
+        name: 'rename',
+        submenu: {
+          name: 'Rename saved preset',
+          description: 'Choose a preset and enter a new name.',
+          items: presetNames.map(name => ({
+            name,
+            action: {
+              type: 'rename-prompt',
+              name
+            }
+          }))
+        }
       }
-    })
-  } 
+    )
+  }
+
+  items.push(
+    {
+      name: 'import',
+      action: {
+        type: 'import'
+      }
+    },
+    {
+      name: 'export',
+      action: {
+        type: 'export'
+      }
+    }
+  )
 
   menu.value = {
     name: `${props.presetButton.spec.name}`,
@@ -133,27 +179,70 @@ function handleMenuAction(action: any) {
     props.presetButton.save(action.name)
     menu.value = null
   } else if(action.type == 'load') {
-    props.presetButton.load(action.name)
     menu.value = null
+    requestAnimationFrame(() => {
+      props.presetButton.load(action.name)
+    })
   } else if(action.type == 'delete') {
     confirmTitle.value = 'Delete preset'
     confirmMessage.value = `Do you really want to delete the preset "${action.name}"?`
-    confirmHandler.value = () => {
+    confirmHandler.value = (confirmed: boolean) => {
+      if(!confirmed) {
+        confirmHandler.value = undefined
+        return
+      }
       props.presetButton.deletePreset(action.name)
       confirmHandler.value = undefined
       menu.value = null
     }
+  } else if(action.type == 'rename-prompt') {
+    textInputTitle.value = `Rename preset "${action.name}"`
+    textInputPlaceholder.value = 'new preset name'
+    textInputHandler.value = (newPresetName) => {
+      const trimmedName = newPresetName.trim()
+      if(!trimmedName || trimmedName === action.name) {
+        textInputHandler.value = undefined
+        menu.value = null
+        return
+      }
+      const renamePreset = () => {
+        props.presetButton.renamePreset(action.name, trimmedName)
+        textInputHandler.value = undefined
+        confirmHandler.value = undefined
+        menu.value = null
+      }
+      if(props.presetButton.getNames().includes(trimmedName)) {
+        textInputHandler.value = undefined
+        confirmTitle.value = 'Overwrite preset'
+        confirmMessage.value = `A preset named "${trimmedName}" already exists. Overwrite it?`
+        confirmHandler.value = (confirmed: boolean) => {
+          if(confirmed) {
+            renamePreset()
+          } else {
+            confirmHandler.value = undefined
+          }
+        }
+      } else {
+        renamePreset()
+      }
+    }
   } else if(action.type == 'import') {
     fileInputTitle.value = 'Import presets'
-    fileInputDescription.value = 'Upload a presets file from your computer in order to import presets'
-    fileInputHandler.value = (file) => {
+    fileInputDescription.value = 'Upload a presets file from your computer in order to import presets.'
+    fileInputMergeOptionLabel.value = 'Merge with current presets'
+    fileInputHandler.value = (file, options) => {
       const reader = new FileReader()
       reader.onload = (event) => {
         const presets = JSON.parse(event.target!.result as string)
-        props.presetButton.setPresets(presets)
+        if(options.mergeWithExisting) {
+          props.presetButton.mergePresets(presets)
+        } else {
+          props.presetButton.setPresets(presets)
+        }
       }
       reader.readAsText(file)
       fileInputHandler.value = undefined
+      fileInputMergeOptionLabel.value = ''
       menu.value = null
     }
   } else if(action.type == 'export') {

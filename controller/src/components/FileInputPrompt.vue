@@ -6,6 +6,14 @@ const props = defineProps({
     type: String,
     required: true,
   },
+  description: {
+    type: String,
+    default: '',
+  },
+  mergeOptionLabel: {
+    type: String,
+    default: '',
+  },
 });
 
 const emit = defineEmits(['close', 'fileUploaded']);
@@ -19,6 +27,7 @@ onMounted(() => {
 });
 
 const selectedFile = ref<File | null>(null);
+const mergeWithExisting = ref(false);
 
 function handleClose() {
   emit('close');
@@ -28,7 +37,9 @@ function handleFileUpload(event: Event) {
   const target = event.target as HTMLInputElement;
   if (target.files && target.files[0]) {
     selectedFile.value = target.files[0];
-    emit('fileUploaded', selectedFile.value);
+    emit('fileUploaded', selectedFile.value, {
+      mergeWithExisting: mergeWithExisting.value,
+    });
   }
 }
 </script>
@@ -37,6 +48,14 @@ function handleFileUpload(event: Event) {
   <div class="popup">
     <div class="popup-content" @keydown.esc="handleClose">
       <h3>{{ props.title }}</h3>
+      <p v-if="props.description">{{ props.description }}</p>
+      <label v-if="props.mergeOptionLabel" class="option">
+        <input
+          v-model="mergeWithExisting"
+          type="checkbox"
+        />
+        <span>{{ props.mergeOptionLabel }}</span>
+      </label>
       <input 
         ref="fileInputRef" 
         type="file" 
@@ -81,6 +100,14 @@ function handleFileUpload(event: Event) {
   margin: 1rem 0;
   border: 1px solid #ccc;
   border-radius: 0.5rem;
+}
+
+.option {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1rem;
 }
 
 .button {

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { Transports, Messages } from '@av-controls/protocol';
 type RootSpecification = Messages.RootSpecification;
 const {
+  ControlStatePatch,
   ControlStateRestore,
   walkSignalTree,
   walkUpdateTree,
@@ -444,6 +445,27 @@ function handleSenderMessage(ws: WebSocket, message: string) {
               seq,
               origin: avMessage.origin,
             });
+          } else if (avMessage?.type === ControlStatePatch.type) {
+            const panel = netPanels[parsed.panelId];
+            if (panel) {
+              mergeStatePatch(panel.currentState, avMessage.state);
+              panel.stateInitialized = true;
+            }
+            assignServerSeq(parsed.panelId, avMessage);
+            verbose('Forwarding control state patch to receiver', {
+              senderSocketId: getSocketId(ws),
+              receiverSocketId: getSocketId(targetReceiver),
+              panelId: parsed.panelId,
+              origin: avMessage.origin,
+            });
+            pruneClosedSubscribers(parsed.panelId);
+            const listeners = panelSubscribers[parsed.panelId] || new Set<WebSocket>();
+            const payload = JSON.stringify(parsed);
+            listeners.forEach((subscriber) => {
+              if (subscriber.readyState === WebSocket.OPEN) {
+                subscriber.send(payload);
+              }
+            });
           } else {
             assignServerSeq(parsed.panelId, avMessage);
             verbose('Forwarding sender message to receiver', {
@@ -689,4 +711,23 @@ function patchStateAtPath(state: any, path: string[], update: any): void {
     return;
   }
   patchStateAtPath(state.states[controlId], restPath, update);
+}
+
+function mergeStatePatch(target: any, patch: any): void {
+  if (!target || !patch || typeof target !== 'object' || typeof patch !== 'object') {
+    return;
+  }
+  if (target.states && patch.states) {
+    for (const controlId in patch.states) {
+      if (target.states[controlId]) {
+        mergeStatePatch(target.states[controlId], patch.states[controlId]);
+      }
+    }
+    return;
+  }
+  for (const key in patch) {
+    if (key !== 'states') {
+      target[key] = patch[key];
+    }
+  }
 }

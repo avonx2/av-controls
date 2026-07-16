@@ -43,13 +43,9 @@ export class PhaseTapPattern {
     this.queue = new PhaseQueue(lookAheadMs)
 
     this.queue.onEveryNotify = (phase, _rate) => {
+      this.finalizeRecordingIfNeeded(phase)
       this.tickPlayback(phase)
-      if (this.onProgressUpdate) {
-        const progress = this.isRecording
-          ? Math.min(1, Math.max(0, (phase - this.recordingStartUnwrappedPhase) / this.phasesPerCycle))
-          : 0
-        this.onProgressUpdate(progress)
-      }
+      this.emitProgress(phase)
     }
 
     this.queue.onTimeJump = (delta) => {
@@ -120,6 +116,7 @@ export class PhaseTapPattern {
     this.isPlaying = false
     this.outputIsDown = false
     this.lastPhaseInCycle = null
+    this.emitProgress()
   }
 
   clear() {
@@ -147,7 +144,7 @@ export class PhaseTapPattern {
     this.queue.whenPhase(recordEnd, (msUntil) => {
       setTimeout(() => {
         if (token !== this.schedulerToken) return
-        this.finalizeRecordingIfNeeded(this.clock.getPredictedUnwrappedPhase())
+        this.finalizeRecordingIfNeeded(Math.max(recordEnd, this.clock.getPredictedUnwrappedPhase()))
       }, msUntil)
     })
   }
@@ -168,12 +165,22 @@ export class PhaseTapPattern {
     }
 
     this.isRecording = false
+    this.emitProgress()
 
     if (this.events.length === 0) return
 
     this.events.sort((a, b) => a.down - b.down)
     this.isPlaying = true
     this.lastPhaseInCycle = null
+  }
+
+  private emitProgress(unwrappedPhase = this.clock.getPredictedUnwrappedPhase()) {
+    if (!this.onProgressUpdate) return
+
+    const progress = this.isRecording
+      ? Math.min(1, Math.max(0, (unwrappedPhase - this.recordingStartUnwrappedPhase) / this.phasesPerCycle))
+      : 0
+    this.onProgressUpdate(progress)
   }
 
   private tickPlayback(unwrappedPhase: number) {

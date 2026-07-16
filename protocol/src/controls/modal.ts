@@ -81,7 +81,7 @@ export class Receiver extends Base.Receiver {
     for (const id in this.controls) {
       const control = this.controls[id]!
       const childContext = Base.resolveStateSnapshotContext(control.spec, ownContext)
-      if (!childContext.included && !Base.hasReceiverStateChildren(control)) {
+      if (!Base.includesOwnState(childContext) && !Base.hasReceiverStateChildren(control)) {
         continue
       }
       const childState = control.getState(childContext)
@@ -89,7 +89,7 @@ export class Receiver extends Base.Receiver {
         states[id] = childState
       }
     }
-    if (!ownContext.included && Object.keys(states).length === 0) {
+    if (!Base.includesOwnState(ownContext) && Object.keys(states).length === 0) {
       return undefined
     }
     return new State(states);
@@ -131,6 +131,9 @@ export class Sender extends Base.Sender {
         sender.onSignal = (signal: Base.Signal) => {
           this.onSignal(new Signal(id, signal))
         }
+        sender.onStatePatch = (state: Base.State) => {
+          this.onStatePatch(new State({ [id]: state }))
+        }
         sender.parent = this
       }
     }
@@ -149,7 +152,7 @@ export class Sender extends Base.Sender {
     for (const id in this.senders) {
       const sender = this.senders[id]!
       const childContext = Base.resolveStateSnapshotContext(sender.spec, ownContext)
-      if (!childContext.included && !Base.hasSenderStateChildren(sender)) {
+      if (!Base.includesOwnState(childContext) && !Base.hasSenderStateChildren(sender)) {
         continue
       }
       const childState = sender.getState(childContext)
@@ -157,7 +160,7 @@ export class Sender extends Base.Sender {
         states[id] = childState
       }
     }
-    if (!ownContext.included && Object.keys(states).length === 0) {
+    if (!Base.includesOwnState(ownContext) && Object.keys(states).length === 0) {
       return undefined
     }
     return new State(states)
@@ -168,6 +171,15 @@ export class Sender extends Base.Sender {
       const stateForControl = state.states[id]
       if (stateForControl) {
         this.senders[id]!.setState(stateForControl)
+      }
+    }
+  }
+
+  applyStatePatch(state: State): void {
+    for (const id in this.senders) {
+      const stateForControl = state.states[id]
+      if (stateForControl) {
+        this.senders[id]!.applyStatePatch(stateForControl)
       }
     }
   }

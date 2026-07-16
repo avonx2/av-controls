@@ -25,7 +25,7 @@ const normalizedValue = computed(() => {
 })
 
 const backgroundStyle = computed(() => {
-  const color = props.fader.spec.color || '#444'
+  const color = props.fader.spec.color || '#222'
   try {
     return {
       backgroundColor: shade(0.3, color),
@@ -35,8 +35,8 @@ const backgroundStyle = computed(() => {
   } catch (e) {
     // Fallback if shade fails (e.g. invalid color string)
     return {
-      backgroundColor: '#444',
-      borderColor: '#666',
+      backgroundColor: '#1a1a1a',
+      borderColor: '#333',
     }
   }
 })

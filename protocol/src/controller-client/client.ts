@@ -5,9 +5,11 @@ import {
   ArtworkRuntimeStatusMessage,
   ControllerHello,
   ControlSignal,
+  ControlStatePatch,
   ControlStateRestore,
   ControlUpdate,
   RootSpecification,
+  dispatchStatePatchToSender,
   dispatchUpdateTreeToSender,
   signalToTree,
   type Message,
@@ -54,6 +56,7 @@ export class ControllerClient {
   public onRootSpec: ((event: ControllerRootSpecEvent) => void) | null = null;
   public onControlUpdate: ((event: ControllerControlUpdateEvent) => void) | null = null;
   public onSignal: ((signal: Base.Signal) => void) | null = null;
+  public onStatePatch: ((state: Base.State) => void) | null = null;
   public onUnknownMessage: ((message: Message) => void) | null = null;
   public onError: ((error: unknown) => void) | null = null;
   /** Protocol version announced by the artwork, once known. */
@@ -111,6 +114,18 @@ export class ControllerClient {
     this.onSignal?.(signal);
   }
 
+  sendStatePatch(state: Base.State) {
+    if (this.rootSender) {
+      dispatchStatePatchToSender(this.rootSender, state);
+    }
+    this.sender.send(new ControlStatePatch(
+      state,
+      { kind: 'controller', clientId: this.clientId },
+      this.nextSeq(),
+    ));
+    this.onStatePatch?.(state);
+  }
+
   restoreState(
     state: Base.State,
     origin: UpdateOrigin = { kind: 'controller', clientId: this.clientId },
@@ -161,6 +176,9 @@ export class ControllerClient {
     rootSender.onSignal = (signal: Base.Signal) => {
       this.sendSignal(signal);
     };
+    rootSender.onStatePatch = (state: Base.State) => {
+      this.sendStatePatch(state);
+    };
 
     this.rootSpec = rootSpec;
     this.rootSender = rootSender;
@@ -185,6 +203,17 @@ export class ControllerClient {
       update,
       rootSender: this.rootSender,
     });
+  }
+
+  private handleControlStatePatch(patch: ControlStatePatch) {
+    const isOwnControllerEcho = patch.origin.kind === 'controller'
+      && patch.origin.clientId === this.clientId;
+    if ((this.options.autoHandleUpdates ?? true) && !isOwnControllerEcho) {
+      if (this.rootSender) {
+        dispatchStatePatchToSender(this.rootSender, patch.state);
+      }
+    }
+    this.onStatePatch?.(patch.state);
   }
 
   private handleArtworkHello(hello: ArtworkHello) {
@@ -215,6 +244,10 @@ export class ControllerClient {
       this.handleControlUpdate(message as ControlUpdate);
       return;
     }
+    if (message.type === ControlStatePatch.type) {
+      this.handleControlStatePatch(message as ControlStatePatch);
+      return;
+    }
     if (
       message.type === ArtworkRuntimeStatusMessage.type
       || message.type === ArtworkRenderAckMessage.type
@@ -235,6 +268,7 @@ export class ControllerClient {
     this.onRootSpec = null;
     this.onControlUpdate = null;
     this.onSignal = null;
+    this.onStatePatch = null;
     this.onUnknownMessage = null;
     this.onError = null;
   }

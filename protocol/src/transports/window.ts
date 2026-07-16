@@ -97,6 +97,14 @@ export class Receiver {
     }
   }
 
+  private dispatchStatePatch(patchMessage: AvControlsMessages.ControlStatePatch): void {
+    Base.Receiver.withUpdateOrigin(patchMessage.origin, () => {
+      AvControlsMessages.dispatchStatePatchToReceiver(this.rootReceiver, patchMessage.state)
+    })
+    this.stateInitialized = true
+    this.persistence?.persistReceiverState(this.rootReceiver)
+  }
+
   private handlePostMessage(event: MessageEvent): void {
     if (!isEnvelope(event.data)) {
       return
@@ -109,6 +117,9 @@ export class Receiver {
     }
     if(message.type === AvControlsMessages.ControlSignal.type) {
       this.dispatchSignal(message as AvControlsMessages.ControlSignal)
+    }
+    if(message.type === AvControlsMessages.ControlStatePatch.type) {
+      this.dispatchStatePatch(message as AvControlsMessages.ControlStatePatch)
     }
     if(message.type === AvControlsMessages.ControlStateRestore.type && !this.stateInitialized) {
       const restoreMessage = message as AvControlsMessages.ControlStateRestore

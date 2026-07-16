@@ -91,6 +91,18 @@ export class ControlStateRestore implements Message {
   ) {}
 }
 
+export class ControlStatePatch implements Message {
+  static type = 'control-state-patch' as const;
+  type = ControlStatePatch.type;
+
+  constructor(
+    public state: Base.State,
+    public origin: UpdateOrigin = { kind: 'controller' },
+    public seq?: number,
+    public serverSeq?: number,
+  ) {}
+}
+
 // updates go from the visuals to the controller
 export class ControlUpdate implements Message {
   static type = 'control-update' as const;
@@ -215,6 +227,14 @@ export function dispatchUpdateTreeToSender(sender: Base.Sender, tree: ControlUpd
       dispatchUpdateTreeToSender(child, tree.children[controlId]!);
     }
   }
+}
+
+export function dispatchStatePatchToReceiver(receiver: Base.Receiver, state: Base.State): void {
+  receiver.restoreState(state);
+}
+
+export function dispatchStatePatchToSender(sender: Base.Sender, state: Base.State): void {
+  sender.applyStatePatch(state);
 }
 
 export function walkUpdateTree(

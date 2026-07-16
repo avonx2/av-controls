@@ -3,7 +3,16 @@ import { Logger } from '../error';
 
 export class Update extends Base.Update {
   constructor(
-    public action: 'random' | 'next'
+    public action: 'random' | 'next',
+    public avoidRecentRatio = 0,
+  ) {
+    super();
+  }
+}
+
+export class Signal extends Base.Signal {
+  constructor(
+    public action: 'bank-changed'
   ) {
     super();
   }
@@ -33,8 +42,8 @@ export class Receiver extends Base.Receiver {
     Logger.debug('PresetButton received message, ignoring', { button: this.spec.name });
   }
 
-  makeRandomSwitch(): void {
-    this.onUpdate(new Update('random'));
+  makeRandomSwitch(avoidRecentRatio = 0.5): void {
+    this.onUpdate(new Update('random', avoidRecentRatio));
   }
 }
 
@@ -42,6 +51,7 @@ export class Sender extends Base.Sender {
   private savedParentStates: {[id: string]: Base.State} = {}
 
   private lastPresetLoaded: string | undefined
+  private recentlyLoadedPresets: string[] = []
 
   getLoadedPreset() {
     return this.lastPresetLoaded
@@ -58,7 +68,7 @@ export class Sender extends Base.Sender {
     if(update.action == 'next') {
       this.nextPresetInRow()
     } else if(update.action == 'random') {
-      this.randomPreset()
+      this.randomPreset(update.avoidRecentRatio)
     }
   }
 
@@ -70,15 +80,17 @@ export class Sender extends Base.Sender {
       }
       console.log(`saving preset ${presetId}`, state)
       this.savedParentStates[presetId] = state
+      this.notifyStateChanged()
     }
   }
 
   load(presetId: string) {
     const savedState = this.savedParentStates[presetId]
     if(this.parent && savedState) {
-      this.parent.setState(savedState)
+      this.parent.onStatePatch(savedState)
     }
     this.lastPresetLoaded = presetId
+    this.rememberLoadedPreset(presetId)
   }
 
   getAllPresets() {
@@ -87,10 +99,34 @@ export class Sender extends Base.Sender {
 
   setPresets(presets: {[id: string]: Base.State}) {
     this.savedParentStates = presets
+    this.notifyStateChanged()
+  }
+
+  mergePresets(presets: {[id: string]: Base.State}) {
+    this.savedParentStates = {
+      ...presets,
+      ...this.savedParentStates,
+    }
+    this.notifyStateChanged()
+  }
+
+  renamePreset(presetId: string, newPresetId: string) {
+    const newId = newPresetId.trim()
+    if (!newId || presetId === newId || !this.savedParentStates[presetId]) {
+      return
+    }
+    this.savedParentStates[newId] = this.savedParentStates[presetId]!
+    delete this.savedParentStates[presetId]
+    if (this.lastPresetLoaded === presetId) {
+      this.lastPresetLoaded = newId
+    }
+    this.recentlyLoadedPresets = this.recentlyLoadedPresets.map(id => id === presetId ? newId : id)
+    this.notifyStateChanged()
   }
 
   deletePreset(presetId: string) {
     delete this.savedParentStates[presetId]
+    this.notifyStateChanged()
   }
 
   nextPresetInRow() {
@@ -105,20 +141,17 @@ export class Sender extends Base.Sender {
     }
   }
 
-  randomPreset() {
+  randomPreset(avoidRecentRatio = 0.5) {
     const presetIds = Object.keys(this.savedParentStates)
     if(presetIds.length > 0) {
-      let i 
-      if(this.lastPresetLoaded !== undefined) { 
-        i = Math.floor(Math.random() * (presetIds.length - 1))
-        const prevIndex = presetIds.indexOf(this.lastPresetLoaded)
-        if(i >= prevIndex) {
-          i += 1 
-        }
-      } else {
-        i = Math.floor(Math.random() * presetIds.length)
-      }
-      const nextPresetId = presetIds[i]!
+      const avoidCount = Math.max(0, Math.min(
+        presetIds.length - 1,
+        Math.floor(presetIds.length * avoidRecentRatio),
+      ))
+      const recent = new Set(this.recentlyLoadedPresets.slice(0, avoidCount))
+      const candidates = presetIds.filter(id => !recent.has(id))
+      const pool = candidates.length > 0 ? candidates : presetIds
+      const nextPresetId = pool[Math.floor(Math.random() * pool.length)]!
       this.load(nextPresetId)
     }
   }
@@ -129,7 +162,7 @@ export class Sender extends Base.Sender {
 
   getState(context?: Base.StateSnapshotContext | string | null): State | undefined {
     const ownContext = Base.resolveStateSnapshotContext(this.spec, context)
-    if (ownContext.presetKey !== null || !ownContext.included) {
+    if (ownContext.presetKey !== null || !Base.includesOwnState(ownContext)) {
       return undefined
     }
     return new State(this.savedParentStates)
@@ -138,7 +171,21 @@ export class Sender extends Base.Sender {
   setState(state: State): void {
     if (state.savedParentStates && typeof state.savedParentStates === 'object') {
       this.savedParentStates = state.savedParentStates
+      this.notifyStateChanged()
     }
+  }
+
+  private notifyStateChanged() {
+    this.onSignal(new Signal('bank-changed'))
+  }
+
+  private rememberLoadedPreset(presetId: string) {
+    this.recentlyLoadedPresets = [
+      presetId,
+      ...this.recentlyLoadedPresets.filter(id => id !== presetId),
+    ]
+    const maxHistory = Math.max(1, Object.keys(this.savedParentStates).length)
+    this.recentlyLoadedPresets.length = Math.min(this.recentlyLoadedPresets.length, maxHistory)
   }
 }
 

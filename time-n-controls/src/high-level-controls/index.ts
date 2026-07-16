@@ -384,13 +384,14 @@ export class RGBCurves {
   ) {
     for(let i = 0; i < 3; i++) {
       this.curves.push(new CubicCurve(
-        new Controls.Base.Args(this.mkId(i, rgbPostfixes[i]), x + i * width / 3, y, width / 3, height, rgbColors[i])
+        new Controls.Base.Args(this.mkId(i), x + i * width / 3, y, width / 3, height, rgbColors[i])
       ))
     }
   }
 
-  mkId(i: number, postfix: string) {
-    return `${this.name} color curve ${postfix} ${i}`
+  mkId(i: number) {
+    const rgbNames = ['red', 'green', 'blue']
+    return `${this.name} ${rgbNames[i]}`
   }
 
   update(sustain: number) {
@@ -402,7 +403,7 @@ export class RGBCurves {
   getControls() {
     const result = {} as any
     this.curves.forEach((curve, i) => {
-      result[this.mkId(i, 'color curve')] = curve.getControl()
+      result[this.mkId(i)] = curve.getControl()
     })
     return result
   }

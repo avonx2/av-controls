@@ -64,7 +64,7 @@ export class Receiver extends Group.Receiver {
     for (const id in this.controls) {
       const control = this.controls[id]!
       const childContext = Base.resolveStateSnapshotContext(control.spec, ownContext)
-      if (!childContext.included && !Base.hasReceiverStateChildren(control)) {
+      if (!Base.includesOwnState(childContext) && !Base.hasReceiverStateChildren(control)) {
         continue
       }
       const childState = control.getState(childContext)
@@ -72,10 +72,10 @@ export class Receiver extends Group.Receiver {
         childStates[id] = childState
       }
     }
-    if (!ownContext.included && Object.keys(childStates).length === 0) {
+    if (!Base.includesOwnState(ownContext) && Object.keys(childStates).length === 0) {
       return undefined
     }
-    if (!ownContext.included) {
+    if (!Base.includesOwnState(ownContext)) {
       return new Group.State(childStates)
     }
     return new State(this.activeId, childStates);
@@ -111,7 +111,7 @@ export class Sender extends Group.Sender {
     for (const id in this.senders) {
       const sender = this.senders[id]!
       const childContext = Base.resolveStateSnapshotContext(sender.spec, ownContext)
-      if (!childContext.included && !Base.hasSenderStateChildren(sender)) {
+      if (!Base.includesOwnState(childContext) && !Base.hasSenderStateChildren(sender)) {
         continue
       }
       const childState = sender.getState(childContext)
@@ -119,10 +119,10 @@ export class Sender extends Group.Sender {
         childStates[id] = childState
       }
     }
-    if (!ownContext.included && Object.keys(childStates).length === 0) {
+    if (!Base.includesOwnState(ownContext) && Object.keys(childStates).length === 0) {
       return undefined
     }
-    if (!ownContext.included) {
+    if (!Base.includesOwnState(ownContext)) {
       return new Group.State(childStates)
     }
     return new State(this.activeId, childStates);
@@ -146,6 +146,18 @@ export class Sender extends Group.Sender {
       const childState = state.states[id];
       if (childState) {
         this.senders[id]!.setState(childState);
+      }
+    }
+  }
+
+  applyStatePatch(state: Group.State): void {
+    if (state instanceof State) {
+      this.activeId = state.activeId;
+    }
+    for (const id in this.senders) {
+      const childState = state.states[id];
+      if (childState) {
+        this.senders[id]!.applyStatePatch(childState);
       }
     }
   }

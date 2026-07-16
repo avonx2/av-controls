@@ -556,6 +556,30 @@ export class Receiver extends WebSocketClient {
     }
   }
 
+  private dispatchStatePatch(panelId: string, receiver: Base.Receiver, patchMessage: AvControlsMessages.ControlStatePatch): void {
+    const previousTree = this.pendingUpdateTreeByPanel.get(panelId)
+    const updateTree: AvControlsMessages.ControlUpdateTree = {}
+    this.pendingUpdateTreeByPanel.set(panelId, updateTree)
+    try {
+      Base.Receiver.withUpdateOrigin(patchMessage.origin, () => {
+        AvControlsMessages.dispatchStatePatchToReceiver(receiver, patchMessage.state)
+      })
+    } finally {
+      if (previousTree) {
+        this.pendingUpdateTreeByPanel.set(panelId, previousTree)
+      } else {
+        this.pendingUpdateTreeByPanel.delete(panelId)
+      }
+    }
+
+    if (updateTree.update !== undefined || updateTree.children !== undefined) {
+      this.sendWsMessage(new Messages.WrappedMessage(
+        panelId,
+        wrap(new AvControlsMessages.ControlUpdate(updateTree, patchMessage.origin)),
+      ))
+    }
+  }
+
   handleWsMessage(msg: Messages.Message): void {
     switch(msg.type) {
       case Messages.WrappedMessage.type:
@@ -567,6 +591,15 @@ export class Receiver extends WebSocketClient {
             const receiver = this.rootReceivers[wsMessage.panelId]
             if (receiver) {
               this.dispatchSignal(wsMessage.panelId, receiver, avMessage)
+            }
+            break;
+          case AvControlsMessages.ControlStatePatch.type:
+            const patchMessage = innerMessage as AvControlsMessages.ControlStatePatch
+            const patchReceiver = this.rootReceivers[wsMessage.panelId]
+            if (patchReceiver) {
+              this.dispatchStatePatch(wsMessage.panelId, patchReceiver, patchMessage)
+              this.stateInitializedByPanel.set(wsMessage.panelId, true)
+              this.persistenceByPanel.get(wsMessage.panelId)?.persistReceiverState(patchReceiver)
             }
             break;
           case AvControlsMessages.ControlStateRestore.type:

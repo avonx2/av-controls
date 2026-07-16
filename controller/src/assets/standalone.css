@@ -11,7 +11,7 @@
   --secondary-color: rgb(var(--secondary-rgb));
   --tertiary-rgb: 153, 153, 255;
   --tertiary-color: rgb(var(--tertiary-rgb));
-  --background-color: #111;
+  --background-color: #050505;
 }
 
 *,

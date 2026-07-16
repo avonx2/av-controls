@@ -24,7 +24,7 @@ let animationFrame = 0
 let lastFrameAt = 0
 
 const backgroundStyle = computed(() => {
-  const color = props.player3d.spec.color || '#444'
+  const color = props.player3d.spec.color || '#222'
   try {
     return {
       backgroundColor: shade(0.3, color),
@@ -33,8 +33,8 @@ const backgroundStyle = computed(() => {
     }
   } catch {
     return {
-      backgroundColor: '#444',
-      borderColor: '#666',
+      backgroundColor: '#1a1a1a',
+      borderColor: '#333',
     }
   }
 })

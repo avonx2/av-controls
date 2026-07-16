@@ -62,6 +62,15 @@ export function scheduleControlStateSnapshotSave(artworkId: string, state: Contr
   saveTimers.set(artworkId, timer)
 }
 
+export async function saveControlStateSnapshotNow(artworkId: string, state: Controls.Base.State): Promise<void> {
+  const existing = saveTimers.get(artworkId)
+  if (existing) {
+    clearTimeout(existing)
+    saveTimers.delete(artworkId)
+  }
+  await saveControlStateSnapshot(artworkId, cloneState(state))
+}
+
 async function saveControlStateSnapshot(artworkId: string, state: Controls.Base.State): Promise<void> {
   const db = await openDb()
   return new Promise((resolve, reject) => {

@@ -73,6 +73,10 @@ export class Receiver extends Base.Receiver {
     }
     // Note: does NOT call onUpdate - avoids persistence loop
   }
+
+  getRandomRangeSample(corridor = 1): number {
+    return getRandomRangeSample(this.spec, corridor)
+  }
 }
 
 export class State extends Base.State {
@@ -118,4 +122,12 @@ export class Sender extends Base.Sender {
   handleUpdate(update: Update) {
     this.value = update.value
   }
+}
+
+function getRandomRangeSample(spec: Spec, corridor = 1): number {
+  const clampedCorridor = Math.max(0, Math.min(1, corridor))
+  const minNorm = (1 - clampedCorridor) / 2
+  const maxNorm = 1 - minNorm
+  const normValue = minNorm + Math.random() * (maxNorm - minNorm)
+  return mapNormToValue(normValue, spec.min, spec.max, spec.mapping)
 }

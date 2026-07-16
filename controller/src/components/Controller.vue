@@ -15,6 +15,7 @@ import { ReconcileMatcher } from '@av-controls/reconcile-ui'
 import { loadTabState, applyTabState, watchTabChanges } from '../tab-state-persistence'
 import {
   loadControlStateSnapshot,
+  saveControlStateSnapshotNow,
   scheduleControlStateSnapshotSave,
 } from '../control-state-persistence'
 
@@ -29,6 +30,7 @@ import {
   fileInputHandler,
   fileInputTitle,
   fileInputDescription,
+  fileInputMergeOptionLabel,
 
   confirmHandler,
   confirmTitle,
@@ -71,6 +73,19 @@ const initialControlSpecByPath = ref<Map<string, {
 }>>(new Map())
 const modalStack = ref<Controls.Modal.Sender[]>([])
 const activeModal = computed(() => modalStack.value.length > 0 ? modalStack.value[modalStack.value.length - 1] : null)
+
+const activeOverlaps = ref<Array<{
+  id: string
+  path: string
+  x: number
+  y: number
+}>>([])
+
+provide('activeOverlaps', activeOverlaps)
+provide('dismissOverlap', (id: string) => {
+  activeOverlaps.value = activeOverlaps.value.filter(o => o.id !== id)
+})
+provide('getControlPath', getControlPath)
 
 const controlledName = ref('')
 const inputMappings = ref<InputMappings | undefined>(undefined)
@@ -149,6 +164,7 @@ function disposeInputMappings() {
 function handleRootSpecification(event: ProtocolControllerClient.ControllerRootSpecEvent) {
   rootSender.value = event.rootSender
   controlledName.value = event.name
+  void restorePresetBanksFromSavedState(event.name, event.rootSender)
   rootSender.value.deepForeach((sender) => {
     sender.onTouch = () => {
       onControllerTouched(sender)
@@ -175,6 +191,58 @@ function handleRootSpecification(event: ProtocolControllerClient.ControllerRootS
     })
   })
   initialControlSpecByPath.value = initialControlSpec
+  
+  // Scan for layout overlaps once
+  const detectedOverlaps: Array<{
+    id: string
+    path: string
+    x: number
+    y: number
+  }> = []
+
+  rootSender.value.deepForeach((sender) => {
+    const node = sender as any
+    if (node.senders) {
+      if (sender.spec.type === 'tabs') {
+        return
+      }
+      const children = Object.values(node.senders) as Controls.Base.Sender[]
+      const containerPath = getControlPath(sender)
+
+      for (let i = 0; i < children.length; i++) {
+        for (let j = i + 1; j < children.length; j++) {
+          const childI = children[i]
+          const childJ = children[j]
+          if (childI && childJ) {
+            const c1 = childI.spec
+            const c2 = childJ.spec
+
+            // Check overlap
+            const x1 = Math.max(c1.x, c2.x)
+            const y1 = Math.max(c1.y, c2.y)
+            const x2 = Math.min(c1.x + c1.width, c2.x + c2.width)
+            const y2 = Math.min(c1.y + c1.height, c2.y + c2.height)
+
+            if (x1 < x2 && y1 < y2) {
+              const pathI = getControlPath(childI)
+              const pathJ = getControlPath(childJ)
+              console.warn(`overlap between: ${pathI} ${pathJ}`)
+              const centerX = (x1 + x2) / 2
+              const centerY = (y1 + y2) / 2
+              detectedOverlaps.push({
+                id: `${pathI}::${pathJ}`,
+                path: containerPath,
+                x: centerX,
+                y: centerY,
+              })
+            }
+          }
+        }
+      }
+    }
+  })
+  activeOverlaps.value = detectedOverlaps
+
   inputMappings.value = new InputMappings(controlledName.value, '1.0.0', rootSender.value)
   inputMappings.value?.connect()
 
@@ -184,6 +252,81 @@ function handleRootSpecification(event: ProtocolControllerClient.ControllerRootS
       watchTabChanges(rootSender.value, controlledName.value)
     }
   })
+}
+
+type ControlStateNode = Controls.Base.State & {
+  states?: Record<string, ControlStateNode>
+  savedParentStates?: Record<string, Controls.Base.State>
+}
+
+type SenderNode = Controls.Base.Sender & {
+  senders?: Record<string, Controls.Base.Sender>
+}
+
+function mergePresetBanksIntoState(target: Controls.Base.State, source: Controls.Base.State | null): Controls.Base.State {
+  if (!source) {
+    return target
+  }
+  const targetNode = target as ControlStateNode
+  const sourceNode = source as ControlStateNode
+  if (sourceNode.savedParentStates && typeof sourceNode.savedParentStates === 'object') {
+    targetNode.savedParentStates = sourceNode.savedParentStates
+  }
+  if (targetNode.states && sourceNode.states) {
+    for (const id in targetNode.states) {
+      const targetChild = targetNode.states[id]
+      const sourceChild = sourceNode.states[id]
+      if (targetChild && sourceChild) {
+        mergePresetBanksIntoState(targetChild, sourceChild)
+      }
+    }
+  }
+  return target
+}
+
+function applyPresetBanksToSender(sender: Controls.Base.Sender, state: Controls.Base.State | null): void {
+  if (!state) {
+    return
+  }
+  const stateNode = state as ControlStateNode
+  if (sender instanceof Controls.PresetButton.Sender && stateNode.savedParentStates) {
+    sender.setState(stateNode as Controls.PresetButton.State)
+  }
+  const senderChildren = (sender as SenderNode).senders
+  if (senderChildren && stateNode.states) {
+    for (const id in senderChildren) {
+      const child = senderChildren[id]
+      const childState = stateNode.states[id]
+      if (child && childState) {
+        applyPresetBanksToSender(child, childState)
+      }
+    }
+  }
+}
+
+async function restorePresetBanksFromSavedState(name: string, sender: Controls.Base.Sender): Promise<void> {
+  try {
+    const savedState = await loadControlStateSnapshot(name)
+    if (rootSender.value === sender) {
+      applyPresetBanksToSender(sender, savedState)
+    }
+  } catch (error) {
+    console.warn('Failed to restore persisted preset banks', error)
+  }
+}
+
+function isPresetBankChangedSignal(signal: Controls.Base.Signal): boolean {
+  let current: unknown = signal
+  while (
+    current
+    && typeof current === 'object'
+    && 'controlId' in current
+    && 'signal' in current
+  ) {
+    current = (current as { signal: unknown }).signal
+  }
+  return current instanceof Controls.PresetButton.Signal
+    && current.action === 'bank-changed'
 }
 
 function startDragLayoutPanel(event: PointerEvent) {
@@ -252,7 +395,12 @@ onMounted(() => {
     onInitializedState: (name, state) => {
       disposeInputMappings()
       controlledName.value = name
-      scheduleControlStateSnapshotSave(name, state)
+      void loadControlStateSnapshot(name).then((savedState) => {
+        scheduleControlStateSnapshotSave(name, mergePresetBanksIntoState(state, savedState))
+      }).catch((error) => {
+        console.warn('Failed to merge persisted preset banks', error)
+        scheduleControlStateSnapshotSave(name, state)
+      })
     },
   })
   controllerClient.onRootSpec = handleRootSpecification
@@ -264,7 +412,21 @@ onMounted(() => {
       }
     }
   }
-  controllerClient.onSignal = () => {
+  controllerClient.onSignal = (signal) => {
+    if (rootSender.value && controlledName.value) {
+      const state = rootSender.value.getState()
+      if (state) {
+        if (isPresetBankChangedSignal(signal)) {
+          void saveControlStateSnapshotNow(controlledName.value, state).catch((error) => {
+            console.warn('Failed to persist preset state immediately', error)
+          })
+        } else {
+          scheduleControlStateSnapshotSave(controlledName.value, state)
+        }
+      }
+    }
+  }
+  controllerClient.onStatePatch = () => {
     if (rootSender.value && controlledName.value) {
       const state = rootSender.value.getState()
       if (state) {
@@ -333,7 +495,7 @@ function manageMappings() {
               action: {
                 type: 'new'
               },
-              color: '#8f8',
+              color: '#181',
             },
             ...mappingNames.map(name => ({
               name: name,
@@ -341,7 +503,7 @@ function manageMappings() {
                 type: 'overwrite', 
                 name
               }, 
-              color: '#f88',
+              color: '#922',
             })),
           ],
         },
@@ -424,6 +586,7 @@ function handleMappingMangeMenuAction(action: any) {
   } else if(action.type == 'import') {
     fileInputTitle.value = 'Import mappings'
     fileInputDescription.value = 'Upload a mappings file from your computer in order to import mappings'
+    fileInputMergeOptionLabel.value = ''
     fileInputHandler.value = (file) => {
       inputMappings.value?.importMappingsFromFile(file)
       fileInputHandler.value = undefined
@@ -782,8 +945,9 @@ defineExpose({
     v-if='fileInputHandler !== undefined'
     :title='fileInputTitle'
     :description='fileInputDescription'
+    :merge-option-label='fileInputMergeOptionLabel'
     @fileUploaded='fileInputHandler'
-    @close='fileInputHandler = undefined'
+    @close='fileInputHandler = undefined; fileInputMergeOptionLabel = ""'
     />
       <ConfirmPrompt 
     v-if='confirmHandler !== undefined'
@@ -1003,7 +1167,7 @@ defineExpose({
   min-height: 8rem;
   max-height: 16rem;
   resize: vertical;
-  background-color: #111;
+  background-color: #050505;
   color: #ddd;
   border: 1px solid #555;
   border-radius: 0.4rem;
@@ -1107,7 +1271,7 @@ defineExpose({
 
 .reconcile-window {
   width: min(48rem, 94vw);
-  background: #20242a;
+  background: #101215;
   border-radius: 0.5rem;
   box-shadow: 0 10px 40px rgb(0 0 0 / 0.5);
   overflow: hidden;
@@ -1118,7 +1282,7 @@ defineExpose({
   padding: 1rem;
   border: 1px solid rgb(120 170 190 / 0.45);
   border-radius: 0.5rem;
-  background: #14181c;
+  background: #0a0c0e;
   box-shadow: 0 1rem 3rem rgb(0 0 0 / 0.45);
   color: #fff;
   display: flex;
@@ -1143,7 +1307,7 @@ defineExpose({
 }
 
 .layout-edit-field input {
-  background: #111;
+  background: #050505;
   color: #fff;
   border: 1px solid rgb(140 188 204 / 0.34);
   border-radius: 0.35rem;

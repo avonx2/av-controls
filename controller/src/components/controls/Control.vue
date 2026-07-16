@@ -45,6 +45,28 @@ const layoutEditConfig = inject('layoutEditConfig', {
 const openControlEditor = inject<(control: Controls.Base.Sender) => void>('openControlEditor')
 const openControlContextMenu = inject<(control: Controls.Base.Sender, event: MouseEvent) => void>('openControlContextMenu')
 
+const activeOverlaps = inject<Ref<Array<{
+  id: string
+  path: string
+  x: number
+  y: number
+}>>>('activeOverlaps', ref([]))
+
+const dismissOverlap = inject<(id: string) => void>('dismissOverlap')
+const getControlPath = inject<(sender: Controls.Base.Sender) => string>('getControlPath')
+
+const containerOverlaps = computed(() => {
+  if (!getControlPath) return []
+  const myPath = getControlPath(props.control)
+  return activeOverlaps.value.filter(o => o.path === myPath)
+})
+
+function handleDismissOverlap(id: string) {
+  if (dismissOverlap) {
+    dismissOverlap(id)
+  }
+}
+
 function onContextMenu(event: MouseEvent) {
   if (!layoutEditMode.value || !openControlContextMenu) {
     return
@@ -498,6 +520,20 @@ const showlabels = false
     <MenuControlComponent v-else-if="type === 'menu'" :menu="control as Controls.Menu.Sender"/>
     <div v-else>Unknown control type (asd): {{ type }}</div>
 
+    <!-- Overlap Warnings -->
+    <div
+      v-for="overlap in containerOverlaps"
+      :key="overlap.id"
+      class="overlap-warning"
+      :style="{ left: overlap.x + '%', top: overlap.y + '%' }"
+      @pointerdown.stop
+      @mousedown.stop
+      @click.stop="handleDismissOverlap(overlap.id)"
+      title="Dismiss overlap warning"
+    >
+      !
+    </div>
+
     <div v-if="layoutEditMode && !isContainerControl" class="layout-blocker" @pointerdown="onMovePointerDown"></div>
 
     <template v-if="layoutEditMode">
@@ -625,5 +661,39 @@ const showlabels = false
   border-radius: 0.5rem;
   width: 1rem;
   height: 1rem;
+}
+
+.overlap-warning {
+  position: absolute;
+  width: 1.8rem;
+  height: 1.8rem;
+  background-color: #d32f2f;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 1.1rem;
+  cursor: pointer;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 10px rgba(211, 47, 47, 0.8), 0 0 0 4px rgba(211, 47, 47, 0.3);
+  animation: pulse-warning 1.5s infinite alternate;
+  user-select: none;
+}
+
+.overlap-warning:hover {
+  background-color: #f44336;
+  box-shadow: 0 0 15px rgba(244, 67, 54, 0.9), 0 0 0 6px rgba(244, 67, 54, 0.4);
+}
+
+@keyframes pulse-warning {
+  0% {
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.15);
+  }
 }
 </style>

@@ -104,6 +104,8 @@ export class AutoPhase implements PhaseClock {
   private resolveModelLoad: (() => void) | null = null
   private rejectModelLoad: ((err: unknown) => void) | null = null
   private resolveCurrentInference: (() => void) | null = null
+  private currentInferenceRequestId: number | null = null
+  private nextInferenceRequestId = 1
 
   private audioContext: AudioContext | null = null
   private workletNode: AudioWorkletNode | null = null
@@ -134,6 +136,10 @@ export class AutoPhase implements PhaseClock {
   private readonly storageKey: string
   private readonly onAudioFrameDropped?: () => void
   private readonly logger?: AutoPhaseLogger
+  private readonly inferenceTimeoutMs = 2000
+  private readonly onVisibilityChange = () => {
+    void this.handleVisibilityChange()
+  }
 
   constructor(config: AutoPhaseConfig) {
     this.modelPath = config.modelPath
@@ -174,6 +180,10 @@ export class AutoPhase implements PhaseClock {
 
     // Start loading the model
     this.modelLoadPromise = this.loadModel()
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.onVisibilityChange)
+    }
   }
 
   private logDroppedAudioFrames() {
@@ -284,6 +294,14 @@ export class AutoPhase implements PhaseClock {
       return
     }
 
+    if (message.requestId !== this.currentInferenceRequestId) {
+      this.log('debug', 'Ignoring stale inference response', {
+        requestId: message.requestId,
+        currentRequestId: this.currentInferenceRequestId,
+      })
+      return
+    }
+
     for (const estimate of message.estimates) {
       this.phaseClock.updateFromInference(
         estimate.phase,
@@ -293,6 +311,7 @@ export class AutoPhase implements PhaseClock {
     }
     this.resolveCurrentInference?.()
     this.resolveCurrentInference = null
+    this.currentInferenceRequestId = null
   }
 
   private handleInferenceWorkerError(err: Error) {
@@ -303,6 +322,7 @@ export class AutoPhase implements PhaseClock {
     }
     this.resolveCurrentInference?.()
     this.resolveCurrentInference = null
+    this.currentInferenceRequestId = null
     this.log('error', 'Inference worker failed', err)
   }
 
@@ -463,6 +483,39 @@ export class AutoPhase implements PhaseClock {
     }
   }
 
+  private async handleVisibilityChange() {
+    if (this.disposed || typeof document === 'undefined') {
+      return
+    }
+
+    if (document.hidden) {
+      this.log('info', 'Document hidden; suspending audio input')
+      if (this.audioContext?.state === 'running') {
+        try {
+          await this.audioContext.suspend()
+        } catch (err) {
+          this.log('warn', 'Failed to suspend audio context', err)
+        }
+      }
+      return
+    }
+
+    this.log('info', 'Document visible; resuming audio input')
+    this.reset()
+
+    if (this.audioContext?.state === 'suspended') {
+      try {
+        await this.audioContext.resume()
+      } catch (err) {
+        this.log('warn', 'Failed to resume audio context', err)
+      }
+    }
+
+    if (this.inputMode === 'audio device input' && this.permissionGranted && this.selectedDeviceId) {
+      await this.startCapture(this.selectedDeviceId)
+    }
+  }
+
   private async processFrameOnWorker(audioFrame: Float32Array) {
     // Compute RMS audio level
     let sumSquares = 0
@@ -499,8 +552,28 @@ export class AutoPhase implements PhaseClock {
         resolve()
         return
       }
+      const requestId = this.nextInferenceRequestId++
+      let settled = false
+      const timeout = window.setTimeout(() => {
+        if (settled) return
+        settled = true
+        if (this.currentInferenceRequestId === requestId) {
+          this.currentInferenceRequestId = null
+          this.resolveCurrentInference = null
+        }
+        this.log('warn', 'Inference worker response timed out', { requestId })
+        resolve()
+      }, this.inferenceTimeoutMs)
+
       this.resolveCurrentInference = resolve
-      worker.postMessage({ type: 'frame', audioFrame }, [audioFrame.buffer])
+      this.currentInferenceRequestId = requestId
+      this.resolveCurrentInference = () => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        resolve()
+      }
+      worker.postMessage({ type: 'frame', requestId, audioFrame }, [audioFrame.buffer])
     })
   }
 
@@ -563,6 +636,11 @@ export class AutoPhase implements PhaseClock {
 
   reset(): void {
     this.phaseClock.reset()
+    this.pendingAudioFrame = null
+    this.inferenceInFlight = false
+    this.resolveCurrentInference?.()
+    this.resolveCurrentInference = null
+    this.currentInferenceRequestId = null
     this.inferenceWorker?.postMessage({ type: 'reset' })
   }
 
@@ -694,6 +772,9 @@ export class AutoPhase implements PhaseClock {
   dispose() {
     this.disposed = true
     this.modelLoaded = false
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange)
+    }
     this.stopCapture()
 
     if (this.workletNode) {
@@ -713,6 +794,7 @@ export class AutoPhase implements PhaseClock {
     this.inferenceInFlight = false
     this.resolveCurrentInference?.()
     this.resolveCurrentInference = null
+    this.currentInferenceRequestId = null
     this.droppedAudioFrames = 0
 
     this.inferenceWorker?.postMessage({ type: 'dispose' })

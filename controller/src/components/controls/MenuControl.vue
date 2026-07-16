@@ -108,10 +108,10 @@ function closeMenu(e: TouchEvent | MouseEvent) {
 }
 
 .menu-modal {
-  background: #333;
+  background: #151515;
   padding: 1.5rem;
   border-radius: 1rem;
-  border: 0.3rem solid #555;
+  border: 0.3rem solid #222;
   max-width: 90vw;
   max-height: 80vh;
   overflow-y: auto;
@@ -156,7 +156,7 @@ function closeMenu(e: TouchEvent | MouseEvent) {
 .menu-close {
   width: 100%;
   padding: 0.8rem;
-  background: #666;
+  background: #333;
   border: none;
   border-radius: 0.5rem;
   color: #fff;
@@ -165,6 +165,6 @@ function closeMenu(e: TouchEvent | MouseEvent) {
 }
 
 .menu-close:active {
-  background: #555;
+  background: #222;
 }
 </style>

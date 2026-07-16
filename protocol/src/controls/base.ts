@@ -1,17 +1,19 @@
 import type { UpdateOrigin } from '../messages';
 
-export type StateSnapshotMaskValue = 'YES' | 'NO'
+export type StateSnapshotMaskValue = 'YES' | 'NO' | 'SPARSE_YES'
 export type StateSnapshotMask = Record<string, StateSnapshotMaskValue>
+export type StateSnapshotMode = 'include' | 'exclude' | 'sparse'
 
 export type StateSnapshotContext = {
   presetKey: string | null
-  included: boolean
+  mode: StateSnapshotMode
 }
 
 export function makeStateSnapshotContext(presetKey?: string | null): StateSnapshotContext {
+  const resolvedPresetKey = presetKey ?? null
   return {
-    presetKey: presetKey ?? null,
-    included: true,
+    presetKey: resolvedPresetKey,
+    mode: resolvedPresetKey === null ? 'include' : 'exclude',
   }
 }
 
@@ -26,7 +28,7 @@ export function resolveStateSnapshotContext(
   if (resolvedContext.presetKey === null) {
     return {
       presetKey: null,
-      included: true,
+      mode: 'include',
     }
   }
 
@@ -34,16 +36,30 @@ export function resolveStateSnapshotContext(
   if (entry === 'YES') {
     return {
       presetKey: resolvedContext.presetKey,
-      included: true,
+      mode: 'include',
     }
   }
   if (entry === 'NO') {
     return {
       presetKey: resolvedContext.presetKey,
-      included: false,
+      mode: 'exclude',
+    }
+  }
+  if (entry === 'SPARSE_YES') {
+    return {
+      presetKey: resolvedContext.presetKey,
+      mode: 'sparse',
     }
   }
   return resolvedContext
+}
+
+export function includesOwnState(context: StateSnapshotContext): boolean {
+  return context.mode === 'include'
+}
+
+export function shouldTraverseChildren(context: StateSnapshotContext): boolean {
+  return context.mode !== 'exclude'
 }
 
 export function hasSenderStateChildren(sender: Sender): boolean {
@@ -110,6 +126,7 @@ export class Spec {
 
 type OnUpdateCallback = (update: Update) => void
 type OnSignalCallback = (signal: Signal) => void
+type OnStatePatchCallback = (state: State) => void
 type OnTouchCallback = () => void
 
 export abstract class Receiver {
@@ -154,6 +171,7 @@ export abstract class Sender {
   public abstract spec: Spec
 
   public onSignal: OnSignalCallback = () => {}
+  public onStatePatch: OnStatePatchCallback = () => {}
   public onTouch: OnTouchCallback = () => {}
 
   public parent?: Sender
@@ -173,6 +191,10 @@ export abstract class Sender {
   }
 
   setState(_state: State): void {
+  }
+
+  applyStatePatch(state: State): void {
+    this.handleUpdate(state as unknown as Update)
   }
 
   traverse(callback: TraversalCallback, object: any) {

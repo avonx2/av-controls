@@ -1,5 +1,9 @@
+<script lang="ts">
+const menuInstanceStack: symbol[] = []
+</script>
+
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 
 import { type MenuSpec, type MenuItemSpec } from '../menu-globals';
 
@@ -13,6 +17,7 @@ const props = defineProps({
 const emit = defineEmits(['back', 'action']);
 
 const activeSubmenu = ref(null as MenuSpec | null);
+const menuInstance = Symbol('menu-instance');
 
 function handleClick(item: MenuItemSpec) {
   if (item.submenu) {
@@ -23,13 +28,40 @@ function handleClick(item: MenuItemSpec) {
 }
 
 function goBack() {
-  console.log('going back') 
   emit('back');
 }
 
 function performAction(action: any) {
   emit('action', action);
 }
+
+function handleKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    if (menuInstanceStack[menuInstanceStack.length - 1] !== menuInstance) {
+      return
+    }
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    if (activeSubmenu.value !== null) {
+      activeSubmenu.value = null
+    } else {
+      goBack();
+    }
+  }
+}
+
+onMounted(() => {
+  menuInstanceStack.push(menuInstance)
+  window.addEventListener('keydown', handleKeyDown);
+});
+
+onUnmounted(() => {
+  const index = menuInstanceStack.indexOf(menuInstance)
+  if (index !== -1) {
+    menuInstanceStack.splice(index, 1)
+  }
+  window.removeEventListener('keydown', handleKeyDown);
+});
 </script>
 
 <template>
@@ -70,20 +102,20 @@ function performAction(action: any) {
   right: 3rem;
   bottom: 3rem; 
   box-shadow: 0 0 3rem rgba(0, 0, 0, 1);
-  background-color: #333; 
+  background-color: #151515; 
   padding: 2rem;
   box-sizing: border-box;
   border-radius: 1rem; 
-  border: 0.5rem solid #444;
+  border: 0.5rem solid #222;
   overflow-y: auto;
 }
 .description {
   color: #bbb;
 }
 .buttonGrid {
-  /* min size of items 10rem */
+  /* min size of items 8rem */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
   gap: 1rem;
   justify-content: center;
   align-items: center;
@@ -96,6 +128,6 @@ function performAction(action: any) {
   vertical-align: middle; 
 }
 .exitButton {
-  background-color: #f88;
+  background-color: #922;
 }
 </style>
