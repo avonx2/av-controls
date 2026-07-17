@@ -38,6 +38,7 @@ export class SpecWithoutControls extends Group.SpecWithoutControls {
     public initialActiveId: string,
     public syncSelection = false,
     public vertical = false,
+    public tabLabels: Record<string, string> = {},
   ) {
     super(baseArgs)
   }
@@ -53,6 +54,7 @@ export class Spec extends Group.Spec {
     public initialActiveId: string,
     public syncSelection = false,
     public vertical = false,
+    public tabLabels: Record<string, string> = {},
   ) {
     super(baseArgs, tabs)
   }
@@ -79,6 +81,7 @@ export class Receiver extends Group.Receiver {
       spec.initialActiveId,
       spec.syncSelection,
       spec.vertical,
+      spec.tabLabels,
     );
   }
 

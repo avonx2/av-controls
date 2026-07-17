@@ -3,7 +3,7 @@ import { Logger } from '../error';
 
 export class Update extends Base.Update {
   constructor(
-    public action: 'random' | 'next',
+    public action: 'random' | 'next' | 'overwrite-loaded',
     public avoidRecentRatio = 0,
   ) {
     super();
@@ -45,6 +45,10 @@ export class Receiver extends Base.Receiver {
   makeRandomSwitch(avoidRecentRatio = 0.5): void {
     this.onUpdate(new Update('random', avoidRecentRatio));
   }
+
+  overwriteLoadedPreset(): void {
+    this.onUpdate(new Update('overwrite-loaded'));
+  }
 }
 
 export class Sender extends Base.Sender {
@@ -69,6 +73,8 @@ export class Sender extends Base.Sender {
       this.nextPresetInRow()
     } else if(update.action == 'random') {
       this.randomPreset(update.avoidRecentRatio)
+    } else if(update.action == 'overwrite-loaded') {
+      this.overwriteLoadedPreset()
     }
   }
 
@@ -153,6 +159,12 @@ export class Sender extends Base.Sender {
       const pool = candidates.length > 0 ? candidates : presetIds
       const nextPresetId = pool[Math.floor(Math.random() * pool.length)]!
       this.load(nextPresetId)
+    }
+  }
+
+  overwriteLoadedPreset() {
+    if(this.lastPresetLoaded !== undefined) {
+      this.save(this.lastPresetLoaded)
     }
   }
 

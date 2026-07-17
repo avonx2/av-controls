@@ -20,7 +20,7 @@ const tabs = computed(() => {
     const tabColor = props.tabs.senders[name]?.spec?.color ?? props.tabs.spec.color
     return {
       name,
-      label: props.tabs.senders[name]?.spec?.name ?? name,
+      label: props.tabs.spec.tabLabels[name] ?? name,
       backgroundColor: props.tabs.activeId == name ? shade(0.5, tabColor) : tabColor,
     }
   })
