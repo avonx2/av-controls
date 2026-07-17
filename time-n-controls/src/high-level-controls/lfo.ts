@@ -288,9 +288,10 @@ export class RGBLFOs extends VectorLFOs {
     x: number, y: number,
     width: number, height: number,
     initialValues: [number, number, number],
-    min = 0, max = 1
+    min = 0, max = 1,
+    modulationScale: ModulationScale = defaultModulationScale,
   ) {
-    super(rgbPostfixes, name, phaseClock, x, y, width, height, initialValues, min, max, rgbColors)
+    super(rgbPostfixes, name, phaseClock, x, y, width, height, initialValues, min, max, rgbColors, modulationScale)
   }
 }
 
@@ -303,8 +304,9 @@ export class RGBALFOs extends VectorLFOs {
     x: number, y: number,
     width: number, height: number,
     initialValues: [number, number, number, number],
-    min = 0, max = 1
+    min = 0, max = 1,
+    modulationScale: ModulationScale = defaultModulationScale,
   ) {
-    super(rgbaPostfixes, name, phaseClock, x, y, width, height, initialValues, min, max, rgbaColors)
+    super(rgbaPostfixes, name, phaseClock, x, y, width, height, initialValues, min, max, rgbaColors, modulationScale)
   }
 }
