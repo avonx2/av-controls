@@ -20,6 +20,7 @@ const tabs = computed(() => {
     const tabColor = props.tabs.senders[name]?.spec?.color ?? props.tabs.spec.color
     return {
       name,
+      label: props.tabs.senders[name]?.spec?.name ?? name,
       backgroundColor: props.tabs.activeId == name ? shade(0.5, tabColor) : tabColor,
     }
   })
@@ -34,17 +35,24 @@ const basisStyle = computed(() => {
   }
 })
 
+function selectTab(activeId: string) {
+  props.tabs.select(activeId)
+}
+
 </script>
 
 <template>
-  <div class="basis framed any" :style="basisStyle" >
+  <div
+    :class="{ basis: true, framed: true, any: true, vertical: props.tabs.spec.vertical }"
+    :style="basisStyle"
+  >
     <div class="header" :style="{ backgroundColor: props.tabs.spec.color }">
       <div v-for="tab in tabs" 
         :class="{tabButton: true, active: tab.name === props.tabs.activeId}"
         :key="tab.name"  
-        @click="props.tabs.activeId = tab.name" 
+        @click="selectTab(tab.name)" 
         :style="{ backgroundColor: tab.backgroundColor }">
-        {{ tab.name }}
+        {{ tab.label }}
       </div>
     </div>
     <div class="content any">
@@ -95,6 +103,38 @@ const basisStyle = computed(() => {
     position: relative;
     flex: 1;
   }
+}
+
+.framed.vertical {
+  flex-direction: row;
+}
+
+.framed.vertical .header {
+  width: fit-content;
+  max-width: 30%;
+  min-width: max-content;
+  flex: 0 0 auto;
+  flex-direction: column;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.framed.vertical .header .tabButton {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.7rem 0.8rem;
+  display: flex;
+  align-items: center;
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0;
+  border-bottom-left-radius: 0.5rem;
+  border-bottom-right-radius: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.framed.vertical .content {
+  min-width: 0;
 }
 
 </style>

@@ -76,7 +76,11 @@ export function applyTabState(root: Controls.Base.Sender, state: Record<string, 
       const savedActiveId = state[path]
       const tabsSender = sender as Controls.Tabs.Sender
       if (savedActiveId && tabsSender.senders[savedActiveId]) {
-        tabsSender.activeId = savedActiveId
+        if (tabsSender.spec.syncSelection) {
+          tabsSender.select(savedActiveId)
+        } else {
+          tabsSender.activeId = savedActiveId
+        }
       }
     }
   })

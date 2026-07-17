@@ -33,9 +33,14 @@ const optionColor = computed(() => {
 })
 
 const control = ref(null) as Ref<HTMLDivElement | null>
-function selectOption(e: TouchEvent | MouseEvent, index: number) {
+const options = computed(() => props.selector.spec.options.map((label, index) => ({
+  label,
+  key: props.selector.spec.optionKeys[index] ?? label,
+})))
+
+function selectOption(e: TouchEvent | MouseEvent, key: string) {
   props.selector.onTouch()
-  props.selector.select(index)
+  props.selector.select(key)
   e.preventDefault()
   control.value!.focus()
 }
@@ -63,15 +68,15 @@ function keyPress(e: KeyboardEvent) {
     </div>
     <div class=options>
       <div
-        v-for="(option, index) in props.selector.spec.options"
-        :key="index"
-        @touchstart="selectOption($event, index)"
-        @mousedown="selectOption($event, index)"
+        v-for="option in options"
+        :key="option.key"
+        @touchstart="selectOption($event, option.key)"
+        @mousedown="selectOption($event, option.key)"
         class="option"
-        :style="{backgroundColor: index === props.selector.index ? selectedColor : optionColor}"
+        :style="{backgroundColor: option.key === props.selector.key ? selectedColor : optionColor}"
         >
         <div class="centered-label" >
-          {{ option }}
+          {{ option.label }}
         </div>
       </div>
     </div>

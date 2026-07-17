@@ -13,6 +13,22 @@ export class State extends Group.State {
   }
 }
 
+export class Signal extends Base.Signal {
+  constructor(
+    public activeId: string,
+  ) {
+    super()
+  }
+}
+
+export class Update extends Base.Update {
+  constructor(
+    public activeId: string,
+  ) {
+    super()
+  }
+}
+
 export class SpecWithoutControls extends Group.SpecWithoutControls {
   static type = 'tabs-without-controls'
   public type = SpecWithoutControls.type
@@ -20,6 +36,8 @@ export class SpecWithoutControls extends Group.SpecWithoutControls {
   constructor(
     baseArgs: Base.Args,
     public initialActiveId: string,
+    public syncSelection = false,
+    public vertical = false,
   ) {
     super(baseArgs)
   }
@@ -33,6 +51,8 @@ export class Spec extends Group.Spec {
     baseArgs: Base.Args,
     public tabs: {[id: string]: Base.Spec},
     public initialActiveId: string,
+    public syncSelection = false,
+    public vertical = false,
   ) {
     super(baseArgs, tabs)
   }
@@ -40,11 +60,13 @@ export class Spec extends Group.Spec {
 
 export class Receiver extends Group.Receiver {
   public type = 'tabs'
+  public spec!: Spec
   public activeId: string
 
   constructor(
     spec: SpecWithoutControls,
     tabs: {[id: string]: Base.Receiver},
+    private onSelect?: (activeId: string) => void,
   ) {
     super(spec, tabs)
     this.activeId = spec.initialActiveId
@@ -55,7 +77,26 @@ export class Receiver extends Group.Receiver {
       spec.baseArgs,
       controlSpecs,
       spec.initialActiveId,
+      spec.syncSelection,
+      spec.vertical,
     );
+  }
+
+  handleSignal(signal: Group.Signal | Signal): void {
+    if (isSelectionSignal(signal)) {
+      this.select(signal.activeId)
+      return
+    }
+    super.handleSignal(signal)
+  }
+
+  select(activeId: string): void {
+    if (!this.controls[activeId]) return
+    this.activeId = activeId
+    this.onSelect?.(activeId)
+    if (this.spec.syncSelection) {
+      this.onUpdate(new Update(activeId))
+    }
   }
 
   getState(context?: Base.StateSnapshotContext | string | null): Group.State | undefined {
@@ -82,8 +123,10 @@ export class Receiver extends Group.Receiver {
   }
 
   restoreState(state: State): void {
-    if (state instanceof State) {
-      this.activeId = state.activeId;
+    const activeId = getStateActiveId(state)
+    if (activeId && this.controls[activeId]) {
+      this.activeId = activeId;
+      this.onSelect?.(activeId);
     }
     for (const id in this.controls) {
       const childState = state.states[id];
@@ -103,6 +146,14 @@ export class Sender extends Group.Sender {
   ) {
     super(spec)
     this.activeId = spec.initialActiveId
+  }
+
+  select(activeId: string) {
+    if (!this.senders[activeId]) return
+    this.activeId = activeId
+    if (this.spec.syncSelection) {
+      this.onSignal(new Signal(activeId))
+    }
   }
 
   getState(context?: Base.StateSnapshotContext | string | null): Group.State | undefined {
@@ -128,7 +179,13 @@ export class Sender extends Group.Sender {
     return new State(this.activeId, childStates);
   }
 
-  handleUpdate(update: { controlId: string; update: Base.Update }): void {
+  handleUpdate(update: Group.Update | Update): void {
+    if (isSelectionUpdate(update)) {
+      if (this.senders[update.activeId]) {
+        this.activeId = update.activeId
+      }
+      return
+    }
     const sender = this.senders[update.controlId]
     if (tabsTimelineUpdateLog) {
       console.info(`[controller:tabs:update] controlId=${update.controlId} hasSender=${Boolean(sender)} update=${JSON.stringify(update.update)}`)
@@ -139,8 +196,9 @@ export class Sender extends Group.Sender {
   }
 
   setState(state: State): void {
-    if (state instanceof State) {
-      this.activeId = state.activeId;
+    const activeId = getStateActiveId(state)
+    if (activeId && this.senders[activeId]) {
+      this.activeId = activeId;
     }
     for (const id in this.senders) {
       const childState = state.states[id];
@@ -151,8 +209,9 @@ export class Sender extends Group.Sender {
   }
 
   applyStatePatch(state: Group.State): void {
-    if (state instanceof State) {
-      this.activeId = state.activeId;
+    const activeId = getStateActiveId(state)
+    if (activeId && this.senders[activeId]) {
+      this.activeId = activeId;
     }
     for (const id in this.senders) {
       const childState = state.states[id];
@@ -161,4 +220,18 @@ export class Sender extends Group.Sender {
       }
     }
   }
+}
+
+function isSelectionSignal(signal: Base.Signal): signal is Signal {
+  return 'activeId' in signal && typeof (signal as { activeId?: unknown }).activeId === 'string'
+}
+
+function isSelectionUpdate(update: Base.Update): update is Update {
+  return 'activeId' in update && typeof (update as { activeId?: unknown }).activeId === 'string'
+}
+
+function getStateActiveId(state: Group.State): string | undefined {
+  return 'activeId' in state && typeof (state as { activeId?: unknown }).activeId === 'string'
+    ? (state as { activeId: string }).activeId
+    : undefined
 }
