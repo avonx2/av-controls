@@ -15,9 +15,20 @@ const darkenedColor = computed(() => {
 })
 
 const percentage = computed(() => {
-  const range = props.meter.spec.max - props.meter.spec.min
-  if (range === 0) return 0
-  return Math.max(0, Math.min(1, (props.meter.value - props.meter.spec.min) / range))
+  return Controls.mapValueToNorm(
+    props.meter.value,
+    props.meter.spec.min,
+    props.meter.spec.max,
+    props.meter.spec.mapping,
+  )
+})
+
+const formattedValue = computed(() => {
+  const value = Math.max(props.meter.spec.min, Math.min(props.meter.spec.max, props.meter.value))
+  if (Number.isInteger(props.meter.spec.min) && Number.isInteger(props.meter.spec.max)) {
+    return `${Math.round(value)}`
+  }
+  return value.toFixed(2)
 })
 
 const containerStyle = computed(() => {
@@ -47,6 +58,7 @@ const trackStyle = computed(() => {
     </div>
   </div>
   <div class="label-top">{{ props.meter.spec.name }}</div>
+  <div class="label-bottom">{{ formattedValue }}</div>
 </template>
 
 <style scoped>

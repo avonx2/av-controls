@@ -15,8 +15,15 @@ import { ref, shallowRef, onMounted, onBeforeUnmount } from 'vue'
 import Controller from './components/Controller.vue'
 import { Transports } from '@av-controls/protocol'
 
-const DEFAULT_WS = window.location.protocol === 'https:' ? 'wss://localhost:8080' : 'ws://localhost:8080'
-const DEFAULT_TAB = window.location.protocol === 'https:' ? 'https://localhost:5173' : 'http://localhost:5173'
+const isProxied = window.location.port === '' || window.location.port === '80' || window.location.port === '443'
+const host = window.location.hostname || 'localhost'
+const secure = window.location.protocol === 'https:'
+const DEFAULT_WS = isProxied
+  ? `${secure ? 'wss' : 'ws'}://${window.location.host}/ws-broker`
+  : `${secure ? 'wss' : 'ws'}://${host}:8080`
+const DEFAULT_TAB = isProxied
+  ? `${window.location.protocol}//${window.location.host}/artwork/`
+  : `${window.location.protocol}//${host}:5173`
 
 function getRememberedValues() {
   try {
