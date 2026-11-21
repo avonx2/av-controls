@@ -1,4 +1,4 @@
-import type { Messages, Base } from 'av-controls'
+import type { Messages, Base } from '@av-controls/protocol'
 
 declare global {
   interface Window {

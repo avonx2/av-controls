@@ -1,4 +1,4 @@
-import { Controls, Transports } from 'av-controls'
+import { Controls, Transports } from '@av-controls/protocol'
 
 const BROKER_URL = 'ws://127.0.0.1:18080'
 const URL_PARAMS = new URLSearchParams(window.location.search)

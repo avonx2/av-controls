@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Transports, Messages, Controls, createSenderFromSpec } from 'av-controls'
+import { Transports, Messages, Controls, createSenderFromSpec } from '@av-controls/protocol'
 
 interface PadInfo {
   path: string

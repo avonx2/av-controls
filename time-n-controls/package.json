@@ -1,6 +1,6 @@
 {
   "name": "@av-controls/time-n-controls",
-  "version": "0.0.3",
+  "version": "1.0.0",
   "description": "a clock and some high level controls for av-controls and visual artworks",
   "main": "./dist/lib.js",
   "types": "./dist/lib.d.ts",
@@ -23,7 +23,7 @@
     "typescript": "^5.5.4"
   },
   "dependencies": {
-    "@av-controls/protocol": "^0.5.2",
+    "@av-controls/protocol": "^1.0.0",
     "dance-ai": "^0.1.1",
     "onnxruntime-web": "^1.17.0"
   },

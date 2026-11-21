@@ -2,23 +2,24 @@
   "name": "av-controls-monorepo",
   "private": true,
   "description": "Workspace root for the open source av-controls stack",
-  "workspaces": [
-    "controller",
-    "protocol",
-    "reconcile-ui",
-    "simple-key-sender",
-    "time-n-controls",
-    "timeline",
-    "server"
-  ],
   "scripts": {
-    "dev:controller": "npm run dev --workspace @av-controls/controller",
-    "dev:timeline": "npm run dev --workspace @av-controls/timeline",
-    "dev:broker": "npm start --workspace @av-controls/server",
-    "build": "npm run build --workspaces --if-present",
+    "dev:controller": "pnpm --filter @av-controls/controller run dev",
+    "dev:timeline": "pnpm --filter @av-controls/timeline run dev",
+    "dev:broker": "pnpm --filter @av-controls/server start",
+    "build": "pnpm -r --if-present run build",
     "test-env:check": "node ./scripts/check-test-ports.mjs",
-    "test-env": "npm run test-env:check && ../node_modules/.bin/concurrently -k -n WS-BROKER,FIXTURE -c blue,green \"WS_PORT=18080 npm start --workspace @av-controls/server\" \"../node_modules/.bin/vite ./e2e/fixtures --config ./e2e/fixtures/vite.config.ts --host 127.0.0.1 --port 18173\"",
+    "test-env": "pnpm run test-env:check && concurrently -k -n WS-BROKER,FIXTURE -c blue,green \"WS_PORT=18080 pnpm --filter @av-controls/server start\" \"vite ./e2e/fixtures --config ./e2e/fixtures/vite.config.ts --host 127.0.0.1 --port 18173\"",
     "test:wait": "node ./scripts/wait-for-test-env.mjs",
-    "test:e2e": "npm run test:wait && ../node_modules/.bin/playwright test --config ./playwright.config.ts"
+    "test:e2e": "pnpm run test:wait && playwright test --config ./playwright.config.ts"
+  },
+  "devDependencies": {
+    "@av-controls/controller": "workspace:*",
+    "@av-controls/protocol": "workspace:*",
+    "@av-controls/timeline": "workspace:*",
+    "@playwright/test": "^1.59.1",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "vite": "^7.1.7",
+    "vue": "^3.5.21"
   }
 }

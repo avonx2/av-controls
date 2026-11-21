@@ -1,6 +1,6 @@
 {
   "name": "@av-controls/protocol",
-  "version": "0.5.2",
+  "version": "1.0.0",
   "description": "this is a protocol for passing audio visual control signals between tabs",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,17 +1,17 @@
 {
   "name": "@av-controls/timeline",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "main": "src/main.ts",
   "scripts": {
-    "dev": "node ../../scripts/check-workspace-deps.mjs && vite",
+    "dev": "vite",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
     "type-check": "vue-tsc --noEmit -p tsconfig.app.json --composite false",
-    "prepublishOnly": "npm run build-only"
+    "prepublishOnly": "pnpm run build-only"
   },
   "dependencies": {
-    "@av-controls/protocol": "^0.5.2",
+    "@av-controls/protocol": "^1.0.0",
     "gl-matrix": "^3.4.4",
     "vue": "^3.5.21"
   },

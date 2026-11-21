@@ -1,6 +1,6 @@
 {
   "name": "@av-controls/server",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "WebSocket broker for the av-controls protocol (relays control panels between artworks and controllers).",
   "license": "MIT",
   "author": "felix niemeyer",
@@ -14,9 +14,9 @@
   ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node ../../scripts/check-workspace-deps.mjs && nodemon",
+    "start": "nodemon",
     "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node18 --packages=external --outfile=dist/server.cjs --banner:js=\"#!/usr/bin/env node\"",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "pnpm run build"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
@@ -29,7 +29,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@av-controls/protocol": "^0.5.2",
+    "@av-controls/protocol": "^1.0.0",
     "express": "^4.21.2",
     "ws": "^8.18.1"
   },

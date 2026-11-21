@@ -1,6 +1,6 @@
 {
   "name": "@av-controls/reconcile-ui",
-  "version": "0.5.2",
+  "version": "1.0.0",
   "description": "Shared Vue UI for reconciling saved control state against a current spec",
   "type": "module",
   "main": "src/index.ts",
@@ -13,7 +13,7 @@
     "src"
   ],
   "dependencies": {
-    "@av-controls/protocol": "^0.5.2"
+    "@av-controls/protocol": "^1.0.0"
   },
   "peerDependencies": {
     "vue": "^3.5.21"

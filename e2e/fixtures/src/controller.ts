@@ -1,4 +1,4 @@
-import { ControllerClient, Messages, Transports, type Base } from 'av-controls'
+import { ControllerClient, Messages, Transports, type Base } from '@av-controls/protocol'
 
 const BROKER_URL = 'ws://127.0.0.1:18080'
 const PANEL_ID = new URLSearchParams(window.location.search).get('panelId') ?? 'e2e-artwork'

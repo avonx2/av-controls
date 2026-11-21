@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
-import Controller from 'av-controller'
-import { Transports } from 'av-controls'
+import Controller from '@av-controls/controller'
+import { Transports } from '@av-controls/protocol'
 
 const BROKER_URL = 'ws://127.0.0.1:18080'
 const PANEL_ID = 'e2e-artwork'

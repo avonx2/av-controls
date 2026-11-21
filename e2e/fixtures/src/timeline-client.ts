@@ -1,5 +1,5 @@
-import { Messages, Transports } from 'av-controls'
-import { TimelineClient, type TimelineState } from 'av-timeline/src/engine'
+import { Messages, Transports } from '@av-controls/protocol'
+import { TimelineClient, type TimelineState } from '@av-controls/timeline/src/engine'
 
 const BROKER_URL = 'ws://127.0.0.1:18080'
 const PANEL_ID = new URLSearchParams(window.location.search).get('panelId') ?? 'e2e-artwork'
